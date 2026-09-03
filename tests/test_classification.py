@@ -200,6 +200,24 @@ class ClassificationTests(unittest.TestCase):
         with self.assertRaisesRegex(CatalogueError, "packages array"):
             classify_packages({}, RULES)
 
+    def test_rejects_unsupported_rule_kind(self) -> None:
+        rules = {
+            "schemaVersion": 1,
+            "relevantRoots": [],
+            "rules": [
+                {
+                    "id": "obsolete-review-kind",
+                    "include": ["synthetic"],
+                    "kind": "review",
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "rules.json"
+            path.write_text(__import__("json").dumps(rules), encoding="utf-8")
+            with self.assertRaisesRegex(CatalogueError, "unsupported kind"):
+                classify_packages({"packages": []}, path)
+
 
 if __name__ == "__main__":
     unittest.main()

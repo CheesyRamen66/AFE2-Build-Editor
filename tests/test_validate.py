@@ -8,12 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from afe2_catalogue.overrides import CATEGORY_BY_KIND  # noqa: E402
 from afe2_catalogue.validate import validate_outputs  # noqa: E402
-
-
-def empty_records() -> dict[str, list[dict[str, object]]]:
-    return {category: [] for category in CATEGORY_BY_KIND.values()}
 
 
 def valid_grid() -> dict[str, object]:
@@ -523,7 +518,6 @@ def valid_planner_arguments() -> dict[str, object]:
     }
     return {
         "candidates": {"records": candidate_records},
-        "catalogue": {"records": empty_records()},
         "collection_assets": {
             "categoryAudit": {
                 "ignoredKeys": [],
@@ -593,10 +587,6 @@ def valid_planner_arguments() -> dict[str, object]:
             "sourceFingerprint": fingerprint,
             "status": "complete",
             "unresolved": [],
-        },
-        "override_activity": {
-            "promotedCandidateIds": [],
-            "suppressedCandidateIds": [],
         },
         "package_index": {
             "packages": [
@@ -669,6 +659,19 @@ class ValidationTests(unittest.TestCase):
 
         self.assertTrue(result["valid"], result["errors"])
         self.assertEqual(result["errors"], [])
+
+    def test_semantic_publication_requires_planner_catalogue(self) -> None:
+        arguments = valid_planner_arguments()
+        arguments["planner_catalogue"] = None
+        arguments["source_manifest"]["coverage"] = {"semanticAssets": {}}
+
+        result = validate_outputs(**arguments)
+
+        self.assertFalse(result["valid"])
+        self.assertIn(
+            "missing-planner-catalogue",
+            {error["code"] for error in result["errors"]},
+        )
 
     def test_unknown_collection_category_warns_and_strict_mode_rejects(self) -> None:
         arguments = valid_planner_arguments()
@@ -1657,12 +1660,7 @@ class ValidationTests(unittest.TestCase):
         }
         arguments = {
             "candidates": {"records": []},
-            "catalogue": {"records": empty_records()},
             "grid_assets": grid_assets,
-            "override_activity": {
-                "promotedCandidateIds": [],
-                "suppressedCandidateIds": [],
-            },
             "package_index": {"packages": []},
             "source_manifest": source_manifest,
             "strict": False,
@@ -1683,120 +1681,17 @@ class ValidationTests(unittest.TestCase):
         self,
         *,
         candidates: list[dict[str, object]],
-        resolved: dict[str, list[dict[str, object]]],
     ) -> dict[str, object]:
         return validate_outputs(
             source_manifest={"archives": []},
             package_index={"packages": [{"packagePath": value["id"]} for value in candidates]},
             candidates={"records": candidates},
-            catalogue={"records": resolved},
-            override_activity={
-                "promotedCandidateIds": [record["id"] for records in resolved.values() for record in records],
-                "suppressedCandidateIds": [],
-            },
             strict=False,
-        )
-
-    def test_accepts_existing_reference_of_expected_kind(self) -> None:
-        candidates = [
-            {"id": "kit", "kind": "kit"},
-            {"id": "perk", "kind": "perk"},
-        ]
-        records = empty_records()
-        records["kits"].append(
-            {
-                "id": "kit",
-                "kind": "kit",
-                "displayName": "Kit",
-                "status": "resolved",
-                "source": {"candidateId": "kit", "packagePath": "kit", "resolution": "override"},
-            }
-        )
-        records["perks"].append(
-            {
-                "id": "perk",
-                "kind": "perk",
-                "displayName": "Perk",
-                "kitId": "kit",
-                "status": "resolved",
-                "source": {"candidateId": "perk", "packagePath": "perk", "resolution": "override"},
-            }
-        )
-
-        result = self.validate(candidates=candidates, resolved=records)
-
-        self.assertTrue(result["valid"])
-        self.assertEqual(result["errors"], [])
-
-    def test_rejects_dangling_and_wrong_kind_references(self) -> None:
-        candidates = [
-            {"id": "kit", "kind": "kit"},
-            {"id": "perk", "kind": "perk"},
-        ]
-        records = empty_records()
-        records["kits"].append(
-            {
-                "id": "kit",
-                "kind": "kit",
-                "displayName": "Kit",
-                "status": "resolved",
-                "source": {"candidateId": "kit", "packagePath": "kit", "resolution": "override"},
-            }
-        )
-        records["perks"].append(
-            {
-                "id": "perk",
-                "kind": "perk",
-                "displayName": "Perk",
-                "kitId": "perk",
-                "requiresIds": ["missing"],
-                "status": "resolved",
-                "source": {"candidateId": "perk", "packagePath": "perk", "resolution": "override"},
-            }
-        )
-
-        result = self.validate(candidates=candidates, resolved=records)
-
-        self.assertFalse(result["valid"])
-        self.assertEqual(
-            {error["code"] for error in result["errors"]},
-            {"dangling-reference", "reference-kind-mismatch"},
-        )
-
-    def test_requires_every_known_category(self) -> None:
-        result = self.validate(candidates=[], resolved={"kits": []})
-
-        self.assertFalse(result["valid"])
-        self.assertEqual(
-            len([error for error in result["errors"] if error["code"] == "missing-catalogue-category"]),
-            len(CATEGORY_BY_KIND) - 1,
-        )
-
-    def test_rejects_malformed_override_backed_identity(self) -> None:
-        candidates = [{"id": "kit", "kind": "kit"}]
-        records = empty_records()
-        records["kits"].append(
-            {
-                "id": "kit",
-                "kind": "kit",
-                "displayName": 42,
-                "status": "complete-ish",
-                "source": {},
-            }
-        )
-
-        result = self.validate(candidates=candidates, resolved=records)
-
-        self.assertFalse(result["valid"])
-        self.assertEqual(
-            {error["code"] for error in result["errors"]},
-            {"invalid-display-name", "invalid-record-source", "invalid-record-status"},
         )
 
     def test_accepts_valid_candidate_semantic_graph_and_grid(self) -> None:
         result = self.validate(
             candidates=valid_semantic_candidates(),
-            resolved=empty_records(),
         )
 
         self.assertTrue(result["valid"])
@@ -1808,7 +1703,7 @@ class ValidationTests(unittest.TestCase):
         by_id["perk:base"]["grid"]["allowedRotations"] = ["Default"]
         by_id["perk:modifier"]["grid"]["shapes"][0]["collisionMask"] = [1]
 
-        result = self.validate(candidates=candidates, resolved=empty_records())
+        result = self.validate(candidates=candidates)
 
         self.assertFalse(result["valid"])
         self.assertEqual(
@@ -1850,7 +1745,7 @@ class ValidationTests(unittest.TestCase):
             "requiresConnectedCompatibleTarget": True,
         }
 
-        result = self.validate(candidates=candidates, resolved=empty_records())
+        result = self.validate(candidates=candidates)
 
         self.assertFalse(result["valid"])
         failures = {
@@ -1925,7 +1820,7 @@ class ValidationTests(unittest.TestCase):
             }
         )
 
-        valid = self.validate(candidates=candidates, resolved=empty_records())
+        valid = self.validate(candidates=candidates)
         self.assertTrue(valid["valid"])
 
         invalid = deepcopy(candidates)
@@ -1940,7 +1835,7 @@ class ValidationTests(unittest.TestCase):
         )
         kit["weaponSlots"][0]["defaultWeaponId"] = "perk:base"
 
-        result = self.validate(candidates=invalid, resolved=empty_records())
+        result = self.validate(candidates=invalid)
 
         self.assertFalse(result["valid"])
         failures = {

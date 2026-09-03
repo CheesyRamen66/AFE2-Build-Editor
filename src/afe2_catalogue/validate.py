@@ -7,24 +7,9 @@ import math
 import re
 from typing import Any
 
+from .classify import CANDIDATE_KINDS
 from .collection import IGNORED_COLLECTION_CATEGORIES, PLANNER_CATEGORY_KINDS
-from .overrides import CATEGORY_BY_KIND, KINDS
 from .planner_catalogue import is_human_ui_text
-
-REFERENCE_FIELDS: dict[str, tuple[str | None, bool]] = {
-    "abilityIds": ("ability", True),
-    "augmentId": ("augment", False),
-    "compatibleModIds": ("mod", True),
-    "compatibleWeaponIds": ("weapon", True),
-    "excludesIds": (None, True),
-    "gridShapeId": ("gridShape", False),
-    "kitId": ("kit", False),
-    "modIds": ("mod", True),
-    "perkIds": ("perk", True),
-    "requiresIds": (None, True),
-    "traitId": ("trait", False),
-    "weaponIds": ("weapon", True),
-}
 
 _SHA256_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 _ATTACHMENT_TAG_PREFIX = "Item.Attachment."
@@ -172,8 +157,6 @@ def validate_outputs(
     source_manifest: dict[str, Any],
     package_index: dict[str, Any],
     candidates: dict[str, Any],
-    catalogue: dict[str, Any],
-    override_activity: dict[str, Any],
     strict: bool,
     collection_assets: dict[str, Any] | None = None,
     grid_assets: dict[str, Any] | None = None,
@@ -181,6 +164,14 @@ def validate_outputs(
 ) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
+    planner_record_count = 0
+    manifest_coverage = source_manifest.get("coverage")
+    if (
+        isinstance(manifest_coverage, dict)
+        and "semanticAssets" in manifest_coverage
+        and planner_catalogue is None
+    ):
+        errors.append({"code": "missing-planner-catalogue"})
 
     if grid_assets is not None:
         if grid_assets.get("schemaVersion") != 1:
@@ -743,6 +734,7 @@ def validate_outputs(
         if not isinstance(planner_records, list):
             errors.append({"code": "planner-catalogue-records-not-array"})
             planner_records = []
+        planner_record_count = len(planner_records)
         planner_ids = [
             item["id"]
             for item in planner_records
@@ -2535,97 +2527,9 @@ def validate_outputs(
                     )
 
     counts = Counter(item.get("kind") for item in candidate_records if isinstance(item, dict))
-    for kind in KINDS:
+    for kind in CANDIDATE_KINDS:
         if counts[kind] == 0:
             warnings.append({"code": "empty-candidate-kind", "kind": kind})
-
-    catalogue_records = catalogue.get("records", {})
-    resolved_ids: list[str] = []
-    resolved_records: list[dict[str, Any]] = []
-    identity_only_ids: list[str] = []
-    partial_ids: list[str] = []
-    kind_by_category = {category: kind for kind, category in CATEGORY_BY_KIND.items()}
-    if not isinstance(catalogue_records, dict):
-        errors.append({"code": "catalogue-records-not-object"})
-        catalogue_records = {}
-    for category in sorted(set(kind_by_category) - set(catalogue_records)):
-        errors.append({"code": "missing-catalogue-category", "category": category})
-    for category, records in catalogue_records.items() if isinstance(catalogue_records, dict) else []:
-        expected_kind = kind_by_category.get(category)
-        if expected_kind is None:
-            errors.append({"code": "unknown-catalogue-category", "category": category})
-            continue
-        if not isinstance(records, list):
-            errors.append({"code": "catalogue-category-not-array", "category": category})
-            continue
-        for record in records:
-            if not isinstance(record, dict) or not isinstance(record.get("id"), str):
-                errors.append({"code": "invalid-catalogue-record", "category": category})
-                continue
-            if record.get("kind") != expected_kind:
-                errors.append({"code": "record-kind-mismatch", "id": record.get("id"), "category": category})
-            if record.get("id") not in candidate_ids:
-                errors.append({"code": "record-source-missing", "id": record.get("id")})
-            if not isinstance(record.get("displayName"), str) or not record["displayName"].strip():
-                errors.append({"code": "invalid-display-name", "id": record.get("id")})
-            status = record.get("status")
-            if status not in {"identity-only", "partial", "resolved"}:
-                errors.append({"code": "invalid-record-status", "id": record.get("id")})
-            elif status == "identity-only":
-                identity_only_ids.append(record["id"])
-            elif status == "partial":
-                partial_ids.append(record["id"])
-            if "internalName" in record and not isinstance(record["internalName"], str):
-                errors.append({"code": "invalid-internal-name", "id": record.get("id")})
-            source = record.get("source")
-            source_candidate = candidate_by_id.get(record.get("id"), {})
-            expected_package_path = source_candidate.get("packagePath", record.get("id"))
-            if (
-                not isinstance(source, dict)
-                or source.get("candidateId") != record.get("id")
-                or source.get("packagePath") != expected_package_path
-                or source.get("resolution") != "override"
-            ):
-                errors.append({"code": "invalid-record-source", "id": record.get("id")})
-            resolved_ids.append(record.get("id"))
-            resolved_records.append(record)
-    duplicate_resolved = sorted(value for value, count in Counter(resolved_ids).items() if count > 1)
-    if duplicate_resolved:
-        errors.append({"code": "duplicate-catalogue-id", "ids": duplicate_resolved})
-
-    kind_by_id = {record["id"]: record.get("kind") for record in resolved_records}
-    for record in resolved_records:
-        for field, (expected_kind, is_array) in REFERENCE_FIELDS.items():
-            if field not in record:
-                continue
-            raw = record[field]
-            if is_array:
-                if not isinstance(raw, list) or not all(isinstance(value, str) for value in raw):
-                    errors.append({"code": "invalid-reference-field", "field": field, "id": record["id"]})
-                    continue
-                targets = raw
-            else:
-                if not isinstance(raw, str):
-                    errors.append({"code": "invalid-reference-field", "field": field, "id": record["id"]})
-                    continue
-                targets = [raw]
-            for target in targets:
-                actual_kind = kind_by_id.get(target)
-                if actual_kind is None:
-                    errors.append(
-                        {"code": "dangling-reference", "field": field, "id": record["id"], "target": target}
-                    )
-                elif expected_kind is not None and actual_kind != expected_kind:
-                    errors.append(
-                        {
-                            "actualKind": actual_kind,
-                            "code": "reference-kind-mismatch",
-                            "expectedKind": expected_kind,
-                            "field": field,
-                            "id": record["id"],
-                            "target": target,
-                        }
-                    )
 
     archive_failures = [
         archive
@@ -2645,11 +2549,6 @@ def validate_outputs(
         if isinstance(warning, dict):
             warnings.append({"code": "adapter-warning", **warning})
 
-    promoted = set(override_activity.get("promotedCandidateIds", []))
-    suppressed = set(override_activity.get("suppressedCandidateIds", []))
-    unresolved = sorted(set(candidate_ids) - promoted - suppressed)
-    if unresolved:
-        warnings.append({"code": "unresolved-candidates", "count": len(unresolved)})
     if unresolved_chip_visual_ids:
         warnings.append(
             {
@@ -2658,23 +2557,6 @@ def validate_outputs(
                 "ids": sorted(unresolved_chip_visual_ids),
             }
         )
-    if identity_only_ids:
-        warnings.append(
-            {
-                "code": "identity-only-catalogue-records",
-                "count": len(identity_only_ids),
-                "ids": sorted(identity_only_ids),
-            }
-        )
-    if partial_ids:
-        warnings.append(
-            {
-                "code": "partial-catalogue-records",
-                "count": len(partial_ids),
-                "ids": sorted(partial_ids),
-            }
-        )
-
     if strict and warnings:
         errors.extend({"code": "strict-warning", "warning": warning} for warning in warnings)
 
@@ -2684,9 +2566,8 @@ def validate_outputs(
         "errors": errors,
         "warnings": warnings,
         "summary": {
-            "catalogueRecords": len(resolved_ids),
-            "candidateCounts": {kind: counts[kind] for kind in KINDS},
+            "candidateCounts": {kind: counts[kind] for kind in CANDIDATE_KINDS},
             "packages": len(packages),
-            "unresolvedCandidates": len(unresolved),
+            "plannerRecords": planner_record_count,
         },
     }

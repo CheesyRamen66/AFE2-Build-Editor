@@ -2441,7 +2441,6 @@ class SemanticNormalizationTests(unittest.TestCase):
         }
         apply_semantic_evidence(
             candidates=enriched_candidates,
-            catalogue={"records": {}},
             semantic=result.document,
         )
         enriched = {item["id"]: item for item in enriched_candidates["records"]}
@@ -2452,7 +2451,7 @@ class SemanticNormalizationTests(unittest.TestCase):
             [base],
         )
 
-    def test_enrichment_reaches_candidate_and_reviewed_catalogue_record(self) -> None:
+    def test_enrichment_reaches_candidate_record(self) -> None:
         result = self.normalize()
         candidates = {
             "records": [
@@ -2464,35 +2463,18 @@ class SemanticNormalizationTests(unittest.TestCase):
                 }
             ]
         }
-        catalogue = {
-            "records": {
-                "mods": [
-                    {
-                        "id": PRIMING,
-                        "kind": "mod",
-                        "displayName": "Priming Chamber",
-                        "compatibility": {"status": "resolved"},
-                        "status": "partial",
-                    }
-                ]
-            }
-        }
-
         apply_semantic_evidence(
             candidates=candidates,
-            catalogue=catalogue,
             semantic=result.document,
         )
 
         candidate = candidates["records"][0]
-        resolved = catalogue["records"]["mods"][0]
         self.assertEqual(candidate["stats"][0]["expression"], "TimeToReload / 1.2")
         self.assertEqual(candidate["missingFields"], ["compatibility"])
-        self.assertEqual(resolved["icon"]["path"], "icons/priming--fixture.png")
-        self.assertEqual(resolved["stats"][0]["operation"], "divide")
-        self.assertIsNone(resolved["description"])
-        self.assertEqual(resolved["compatibility"]["status"], "resolved")
-        self.assertEqual(resolved["semanticCompatibility"]["status"], "partial")
+        self.assertEqual(candidate["icon"]["path"], "icons/priming--fixture.png")
+        self.assertEqual(candidate["stats"][0]["operation"], "divide")
+        self.assertIsNone(candidate["description"])
+        self.assertEqual(candidate["compatibility"]["status"], "partial")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -17,15 +18,18 @@ from .archives import (
     validate_retoc_key,
 )
 from .classify import classify_packages
-from .diffing import diff_catalogues, diff_record_lists
+from .diffing import diff_documents, diff_record_lists, document_records
 from .discovery import DiscoveryError, SourceInventory, discover_source_inventory
 from .errors import CatalogueError
 from .jsonio import digest_file, digest_value, publish_documents, read_json, write_json_atomic
 from .managed_tools import ManagedTool, ensure_managed_tools
-from .overrides import apply_overrides
 from .planner_catalogue import build_planner_catalogue
 from .save_evidence import build_save_evidence, load_character_save
-from .semantic_assets import apply_semantic_evidence, build_semantic_assets
+from .semantic_assets import (
+    MAX_SEMANTIC_READER_JOBS,
+    apply_semantic_evidence,
+    build_semantic_assets,
+)
 from .semantic_reader import ManagedSemanticReader, ensure_semantic_reader
 from .secrets import resolve_key
 from .validate import validate_outputs
@@ -33,7 +37,6 @@ from .version import __version__
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RULES = PROJECT_ROOT / "config/categories.json"
-DEFAULT_OVERRIDES = PROJECT_ROOT / "overrides/catalogue.json"
 DEFAULT_OUTPUT = PROJECT_ROOT / ".local/catalogue"
 DEFAULT_SAVE_EVIDENCE = PROJECT_ROOT / ".local/save-evidence.json"
 SEMANTIC_PYTHON_SOURCES = (
@@ -44,18 +47,51 @@ SEMANTIC_PYTHON_SOURCES = (
     PROJECT_ROOT / "src/afe2_catalogue/semantic_reader.py",
     PROJECT_ROOT / "src/afe2_catalogue/weapon_compatibility.py",
 )
+RECORD_DOCUMENT_FILENAMES = (
+    "planner-catalogue.json",
+    "candidate-records.json",
+)
 
 
 def _path(value: str) -> Path:
     return Path(value).expanduser()
 
 
-def _existing_catalogue(path: Path) -> dict[str, Any]:
-    candidate = path / "catalogue.json" if path.is_dir() else path
+def _positive_jobs(value: str) -> int:
+    try:
+        jobs = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("jobs must be a positive integer") from exc
+    if not 1 <= jobs <= MAX_SEMANTIC_READER_JOBS:
+        raise argparse.ArgumentTypeError(
+            f"jobs must be a positive integer no greater than {MAX_SEMANTIC_READER_JOBS}"
+        )
+    return jobs
+
+
+def _default_jobs() -> int:
+    available = os.cpu_count() or 1
+    return max(1, min(4, available // 2))
+
+
+def _record_document(path: Path) -> tuple[dict[str, Any], str]:
+    """Read the editor record document from a file or generated publication."""
+
+    if path.is_dir():
+        for filename in RECORD_DOCUMENT_FILENAMES:
+            candidate = path / filename
+            if candidate.is_file():
+                break
+        else:
+            raise CatalogueError(f"publication has no record document: {path}")
+    else:
+        candidate = path
+        filename = path.name
     value = read_json(candidate)
     if not isinstance(value, dict):
-        raise CatalogueError(f"catalogue root must be an object: {candidate}")
-    return value
+        raise CatalogueError(f"record document root must be an object: {candidate}")
+    document_records(value, label=str(candidate))
+    return value, filename
 
 
 def _optional_sibling_document(path: Path, filename: str) -> dict[str, Any] | None:
@@ -67,6 +103,112 @@ def _optional_sibling_document(path: Path, filename: str) -> dict[str, Any] | No
     if not isinstance(value, dict):
         raise CatalogueError(f"generated document root must be an object: {candidate}")
     return value
+
+
+def _optional_record_document(
+    path: Path | None,
+    filename: str,
+    *,
+    allow_direct: bool = False,
+) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    candidate = (
+        path / filename
+        if path.is_dir()
+        else path
+        if allow_direct
+        else path.parent / filename
+    )
+    if not candidate.is_file():
+        return None
+    value = read_json(candidate)
+    if not isinstance(value, dict):
+        raise CatalogueError(f"record document root must be an object: {candidate}")
+    document_records(value, label=str(candidate))
+    return value
+
+
+def _empty_record_changes() -> dict[str, Any]:
+    return {"added": [], "changed": [], "removed": []}
+
+
+def _change_section(
+    *,
+    current: dict[str, Any],
+    baseline: dict[str, Any] | None,
+    baseline_path: Path | None,
+    record_source: str,
+) -> dict[str, Any]:
+    if baseline_path is not None and baseline is None:
+        changes = _empty_record_changes()
+        baseline_status = "missing-record-source"
+    else:
+        changes = diff_record_lists(
+            document_records(baseline) if baseline is not None else None,
+            document_records(current),
+        )
+        baseline_status = "available" if baseline is not None else "initial"
+    return {
+        "baselineStatus": baseline_status,
+        "recordSource": record_source,
+        **changes,
+    }
+
+
+def _build_changes(
+    *,
+    candidates: dict[str, Any],
+    planner_catalogue: dict[str, Any] | None,
+    baseline_path: Path | None,
+    explicit_baseline: bool,
+    source_fingerprint: str,
+) -> dict[str, Any]:
+    """Build the stable change-report schema for semantic and index-only runs."""
+
+    record_source = (
+        "planner-catalogue.json"
+        if planner_catalogue is not None
+        else "candidate-records.json"
+    )
+    current = planner_catalogue if planner_catalogue is not None else candidates
+    baseline = _optional_record_document(
+        baseline_path,
+        record_source,
+        allow_direct=(
+            explicit_baseline
+            and baseline_path is not None
+            and baseline_path.name == record_source
+        ),
+    )
+    candidate_baseline = _optional_record_document(
+        baseline_path,
+        "candidate-records.json",
+        allow_direct=(
+            explicit_baseline
+            and baseline_path is not None
+            and baseline_path.name == "candidate-records.json"
+        ),
+    )
+    return {
+        "schemaVersion": 2,
+        "candidateChanges": _change_section(
+            current=candidates,
+            baseline=candidate_baseline,
+            baseline_path=baseline_path,
+            record_source="candidate-records.json",
+        ),
+        "recordChanges": _change_section(
+            current=current,
+            baseline=baseline,
+            baseline_path=baseline_path,
+            record_source=record_source,
+        ),
+        "fromSourceFingerprint": (
+            baseline.get("sourceFingerprint") if baseline else None
+        ),
+        "toSourceFingerprint": source_fingerprint,
+    }
 
 
 def _largest_archive(inventory: SourceInventory, archive_type: str) -> Path:
@@ -271,7 +413,6 @@ def _make_documents(
         "game": game,
         "packages": package_index["packages"],
         "pakMembers": package_index["pakMembers"],
-        "overridesDigest": digest_file(args.overrides),
         "rulesDigest": digest_file(args.rules),
         "semanticAssets": semantic_provenance or {"enabled": False},
     }
@@ -297,19 +438,12 @@ def _make_documents(
         },
         "extractor": {"name": "afe2-catalogue", "version": __version__},
         "game": game,
-        "overridesDigest": fingerprint_seed["overridesDigest"],
         "rulesDigest": fingerprint_seed["rulesDigest"],
         "sourceFingerprint": source_fingerprint,
     }
 
     candidates = classify_packages(package_index, args.rules)
     candidates["sourceFingerprint"] = source_fingerprint
-    catalogue, activity = apply_overrides(
-        candidates,
-        args.overrides,
-        build_id=installation.build_id,
-    )
-    catalogue["sourceFingerprint"] = source_fingerprint
 
     binary_files: dict[str, bytes] = {}
     semantic_document: dict[str, Any] | None = None
@@ -331,6 +465,7 @@ def _make_documents(
             candidates=candidates,
             source_fingerprint=source_fingerprint,
             secret_environment_names=(args.aes_key_env,),
+            jobs=args.jobs,
         )
         semantic_document = semantic_build.document
         collection_document = semantic_build.collection_document
@@ -342,7 +477,6 @@ def _make_documents(
         binary_files = semantic_build.binary_files
         apply_semantic_evidence(
             candidates=candidates,
-            catalogue=catalogue,
             semantic=semantic_document,
         )
         planner_document = build_planner_catalogue(
@@ -358,59 +492,23 @@ def _make_documents(
         source_manifest["coverage"]["gridAssets"] = grid_document["coverage"]
         source_manifest["coverage"]["plannerCatalogue"] = planner_document["coverage"]
 
-    baseline: dict[str, Any] | None = None
-    baseline_documents_path: Path | None = None
     baseline_path = args.baseline
-    if baseline_path:
-        baseline = _existing_catalogue(baseline_path)
-        baseline_documents_path = baseline_path
-    elif (args.output / "catalogue.json").is_file():
-        baseline = _existing_catalogue(args.output / "catalogue.json")
-        baseline_documents_path = args.output
-    changes = diff_catalogues(baseline, catalogue)
-    old_candidates = (
-        _optional_sibling_document(baseline_documents_path, "candidate-records.json")
-        if baseline_documents_path
-        else None
+    if baseline_path is not None and not baseline_path.exists():
+        raise CatalogueError(f"baseline does not exist: {baseline_path}")
+    if baseline_path is None and args.output.is_dir():
+        baseline_path = args.output
+    changes = _build_changes(
+        candidates=candidates,
+        planner_catalogue=planner_document,
+        baseline_path=baseline_path,
+        explicit_baseline=args.baseline is not None,
+        source_fingerprint=source_fingerprint,
     )
-    old_activity = (
-        _optional_sibling_document(baseline_documents_path, "override-activity.json")
-        if baseline_documents_path
-        else None
-    )
-    candidate_baseline_available = baseline_documents_path is None or old_candidates is not None
-    changes["candidateBaselineAvailable"] = candidate_baseline_available
-    changes["candidateChanges"] = (
-        diff_record_lists(
-            old_candidates.get("records", []) if old_candidates else None,
-            candidates["records"],
-        )
-        if candidate_baseline_available
-        else {"added": [], "changed": [], "removed": []}
-    )
-    current_unresolved = set(record["id"] for record in candidates["records"]) - set(
-        activity["promotedCandidateIds"]
-    ) - set(activity["suppressedCandidateIds"])
-    if old_candidates is not None:
-        old_candidate_ids = {record["id"] for record in old_candidates.get("records", [])}
-        old_promoted = set((old_activity or {}).get("promotedCandidateIds", []))
-        old_suppressed = set((old_activity or {}).get("suppressedCandidateIds", []))
-        old_unresolved = old_candidate_ids - old_promoted - old_suppressed
-    else:
-        old_unresolved = set()
-    changes["unresolvedCandidateChanges"] = {
-        "added": sorted(current_unresolved - old_unresolved) if candidate_baseline_available else [],
-        "removed": sorted(old_unresolved - current_unresolved) if candidate_baseline_available else [],
-    }
-    changes["fromSourceFingerprint"] = baseline.get("sourceFingerprint") if baseline else None
-    changes["toSourceFingerprint"] = source_fingerprint
 
     validation = validate_outputs(
         source_manifest=source_manifest,
         package_index=package_index,
         candidates=candidates,
-        catalogue=catalogue,
-        override_activity=activity,
         collection_assets=collection_document,
         grid_assets=grid_document,
         planner_catalogue=planner_document,
@@ -418,9 +516,7 @@ def _make_documents(
     )
     documents = {
         "candidate-records.json": candidates,
-        "catalogue.json": catalogue,
         "changes.json": changes,
-        "override-activity.json": activity,
         "package-index.json": package_index,
         "source-manifest.json": source_manifest,
         "validation.json": validation,
@@ -459,10 +555,6 @@ def command_extract(args: argparse.Namespace) -> int:
     if archived is not None:
         print(f"Preserved the previous publication at {archived}")
     print(f"Indexed {summary['packages']} IoStore packages; candidates: {counts}")
-    print(
-        f"Promoted {summary['catalogueRecords']} override-backed record(s); "
-        f"{summary['unresolvedCandidates']} candidate(s) remain unresolved"
-    )
     semantic = documents.get("semantic-assets.json")
     if isinstance(semantic, dict):
         coverage = semantic["coverage"]
@@ -558,16 +650,12 @@ def command_validate(args: argparse.Namespace) -> int:
             "source-manifest.json",
             "package-index.json",
             "candidate-records.json",
-            "catalogue.json",
-            "override-activity.json",
         )
     }
     result = validate_outputs(
         source_manifest=required["source-manifest.json"],
         package_index=required["package-index.json"],
         candidates=required["candidate-records.json"],
-        catalogue=required["catalogue.json"],
-        override_activity=required["override-activity.json"],
         collection_assets=_optional_sibling_document(root, "collection-assets.json"),
         grid_assets=_optional_sibling_document(root, "grid-assets.json"),
         planner_catalogue=_optional_sibling_document(root, "planner-catalogue.json"),
@@ -578,7 +666,37 @@ def command_validate(args: argparse.Namespace) -> int:
 
 
 def command_diff(args: argparse.Namespace) -> int:
-    result = diff_catalogues(_existing_catalogue(args.old), _existing_catalogue(args.new))
+    old, old_source = _record_document(args.old)
+    new, new_source = _record_document(args.new)
+    old_canonical_source = (
+        old_source if old_source in RECORD_DOCUMENT_FILENAMES else None
+    )
+    new_canonical_source = (
+        new_source if new_source in RECORD_DOCUMENT_FILENAMES else None
+    )
+    if (
+        old_canonical_source is not None
+        and new_canonical_source is not None
+        and old_canonical_source != new_canonical_source
+    ):
+        raise CatalogueError(
+            "cannot compare documents with different record sources: "
+            f"{old_canonical_source} and {new_canonical_source}"
+        )
+    record_changes = diff_documents(old, new)
+    result = {
+        "schemaVersion": 2,
+        "recordChanges": {
+            "baselineStatus": "available",
+            "recordSource": new_canonical_source or "records",
+            **{
+                key: record_changes[key]
+                for key in ("added", "changed", "removed")
+            },
+        },
+        "fromSourceFingerprint": old.get("sourceFingerprint"),
+        "toSourceFingerprint": new.get("sourceFingerprint"),
+    }
     if args.output:
         write_json_atomic(args.output, result)
         print(f"Wrote diff to {args.output.resolve()}")
@@ -598,8 +716,11 @@ def command_inspect_save(args: argparse.Namespace) -> int:
         raise CatalogueError("save evidence output must be outside the generated catalogue directory")
     package_index = read_json(catalogue_root / "package-index.json")
     candidates = read_json(catalogue_root / "candidate-records.json")
-    catalogue = read_json(catalogue_root / "catalogue.json")
-    if not all(isinstance(value, dict) for value in (package_index, candidates, catalogue)):
+    planner_catalogue = read_json(catalogue_root / "planner-catalogue.json")
+    if not all(
+        isinstance(value, dict)
+        for value in (package_index, candidates, planner_catalogue)
+    ):
         raise CatalogueError("catalogue evidence inputs must be JSON objects")
 
     save, normalization = load_character_save(args.save)
@@ -608,7 +729,7 @@ def command_inspect_save(args: argparse.Namespace) -> int:
         normalization=normalization,
         package_index=package_index,
         candidates=candidates,
-        catalogue=catalogue,
+        planner_catalogue=planner_catalogue,
     )
     write_json_atomic(output, evidence)
     summary = evidence["summary"]
@@ -616,7 +737,7 @@ def command_inspect_save(args: argparse.Namespace) -> int:
     print(
         f"Observed {summary['assets']} assets in {summary['assetOccurrences']} reference(s); "
         f"indexed={summary['indexedAssets']}, candidates={summary['candidateAssets']}, "
-        f"catalogue={summary['catalogueAssets']}, aliases={summary['catalogueAliasedAssets']}"
+        f"planner={summary['plannerAssets']}, aliases={summary['plannerAliasedAssets']}"
     )
     if summary["missingPackageAssets"]:
         print(
@@ -660,7 +781,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_install_arguments(doctor)
     doctor.set_defaults(handler=command_doctor)
 
-    extract = subparsers.add_parser("extract", help="index archives and build candidate catalogue JSON")
+    extract = subparsers.add_parser(
+        "extract",
+        help="index archives and build the planner catalogue",
+    )
     _add_install_arguments(extract)
     extract.add_argument("--manifest", type=_path, help="use an existing retoc pakstore.json")
     extract.add_argument(
@@ -673,9 +797,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip Unreal property parsing and PNG icon extraction",
     )
+    extract.add_argument(
+        "--jobs",
+        type=_positive_jobs,
+        default=_default_jobs(),
+        metavar="N",
+        help=(
+            "maximum parallel semantic-reader processes, 1 through 16 "
+            "(default: half of CPUs, capped at 4)"
+        ),
+    )
     extract.add_argument("--rules", type=_path, default=DEFAULT_RULES)
-    extract.add_argument("--overrides", type=_path, default=DEFAULT_OVERRIDES)
-    extract.add_argument("--baseline", type=_path, help="old catalogue or generated output directory")
+    extract.add_argument(
+        "--baseline",
+        type=_path,
+        help=(
+            "old generated output directory, or a direct record document named "
+            "planner-catalogue.json or candidate-records.json"
+        ),
+    )
     extract.add_argument("--output", type=_path, default=DEFAULT_OUTPUT)
     archive_options = extract.add_mutually_exclusive_group()
     archive_options.add_argument(
@@ -699,7 +839,10 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--strict", action="store_true")
     validate.set_defaults(handler=command_validate)
 
-    diff = subparsers.add_parser("diff", help="compare two catalogue JSON files or output directories")
+    diff = subparsers.add_parser(
+        "diff",
+        help="compare two planner/candidate JSON files or output directories",
+    )
     diff.add_argument("old", type=_path)
     diff.add_argument("new", type=_path)
     diff.add_argument("--output", type=_path, help="JSON file to write; otherwise print the diff")
@@ -709,12 +852,19 @@ def build_parser() -> argparse.ArgumentParser:
         "inspect-save",
         help="record positive per-asset evidence from a partial decoded character save",
     )
-    inspect_save.add_argument("save", type=_path, help="readable AFE2 char.dec file")
+    inspect_save.add_argument(
+        "save",
+        type=_path,
+        help="decoded AFE2 character JSON (for example char.dec or char.json)",
+    )
     inspect_save.add_argument(
         "--catalogue-dir",
         type=_path,
         default=DEFAULT_OUTPUT,
-        help="generated catalogue directory used to join package and candidate IDs",
+        help=(
+            "generated catalogue directory used to join package, candidate, "
+            "and planner IDs"
+        ),
     )
     inspect_save.add_argument("--output", type=_path, default=DEFAULT_SAVE_EVIDENCE)
     inspect_save.set_defaults(handler=command_inspect_save)

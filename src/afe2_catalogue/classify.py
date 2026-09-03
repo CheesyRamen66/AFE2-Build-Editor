@@ -15,6 +15,19 @@ from typing import Any
 from .errors import CatalogueError
 
 
+CANDIDATE_KINDS = (
+    "ability",
+    "augment",
+    "gridShape",
+    "item",
+    "kit",
+    "mod",
+    "perk",
+    "trait",
+    "weapon",
+)
+
+
 @dataclass(frozen=True)
 class Rule:
     id: str
@@ -56,10 +69,15 @@ def load_rules(path: Path) -> tuple[int, list[Rule], list[str]]:
             raise CatalogueError(f"classification rule {rule_id} has invalid patterns") from exc
         if not include:
             raise CatalogueError(f"classification rule {rule_id} has no include pattern")
+        kind = str(item.get("kind", ""))
+        if kind not in CANDIDATE_KINDS:
+            raise CatalogueError(
+                f"classification rule {rule_id} has unsupported kind: {kind}"
+            )
         rules.append(
             Rule(
                 id=rule_id,
-                kind=str(item.get("kind", "")),
+                kind=kind,
                 include=include,
                 exclude=exclude,
                 confidence=str(item.get("confidence", "path-heuristic")),

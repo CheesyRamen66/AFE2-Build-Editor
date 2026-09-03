@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -69,6 +71,9 @@ _PLAYER_ITEM_SLOT_TAG = "Slot.Consumable.Custom"
 _KIT_REWARD_REGISTRY = re.compile(
     r"^/Game/Metagame/(?:[^/]+/)*(?:[^/]*MetaMissions|[^/]*MetaMissionTables)$"
 )
+_FALLBACK_ARG_MAX = 32 * 1024
+_READER_MIN_REQUESTS_PER_JOB = 128
+MAX_SEMANTIC_READER_JOBS = 16
 
 
 @dataclass(frozen=True)
@@ -126,6 +131,66 @@ def _member_map(package_index: Mapping[str, Any]) -> dict[str, str]:
     return result
 
 
+def _argument_bytes(arguments: Sequence[str]) -> int:
+    """Conservatively estimate exec argument storage, including pointer overhead."""
+
+    return sum(len(os.fsencode(argument)) + 1 + 8 for argument in arguments)
+
+
+def _process_argv_budget() -> int:
+    """Return a portable, headroom-adjusted budget for a child process argv."""
+
+    try:
+        configured = os.sysconf("SC_ARG_MAX")
+        arg_max = int(configured) if int(configured) > 0 else _FALLBACK_ARG_MAX
+    except (AttributeError, OSError, TypeError, ValueError):
+        arg_max = _FALLBACK_ARG_MAX
+    environment_bytes = sum(
+        len(os.fsencode(name)) + len(os.fsencode(value)) + 2 + 16
+        for name, value in os.environ.items()
+    )
+    # execve shares ARG_MAX between argv and the environment.  Retain at least
+    # 16 KiB beyond the measured environment for libc/platform bookkeeping and
+    # for environment growth between planning and process creation.
+    reserve = environment_bytes + max(16 * 1024, arg_max // 8)
+    # A nearly full environment may leave no safe argv capacity.  Preserve that
+    # result so _filter_argument_batches fails before execve instead of flooring
+    # it to a value the operating system cannot actually accommodate.
+    return arg_max - reserve
+
+
+def _filter_argument_batches(
+    base_arguments: Sequence[str],
+    members: Sequence[str],
+    *,
+    budget: int | None = None,
+) -> list[list[str]]:
+    """Pack ``--filter`` pairs without approaching the platform argv limit."""
+
+    limit = _process_argv_budget() if budget is None else budget
+    base = list(base_arguments)
+    base_size = _argument_bytes(base)
+    if limit <= base_size:
+        raise CatalogueError("archive converter command exceeded the safe argument budget")
+    batches: list[list[str]] = []
+    current = list(base)
+    current_size = base_size
+    for member in members:
+        pair = ["--filter", member]
+        pair_size = _argument_bytes(pair)
+        if base_size + pair_size > limit:
+            raise CatalogueError("an archive member path exceeded the safe argument budget")
+        if len(current) > len(base) and current_size + pair_size > limit:
+            batches.append(current)
+            current = list(base)
+            current_size = base_size
+        current.extend(pair)
+        current_size += pair_size
+    if len(current) > len(base):
+        batches.append(current)
+    return batches
+
+
 def _extract_members(
     *,
     paks_dir: Path,
@@ -135,22 +200,19 @@ def _extract_members(
     members: Iterable[str],
 ) -> None:
     selected = sorted(set(members))
-    for offset in range(0, len(selected), 384):
-        batch = selected[offset : offset + 384]
-        arguments = [
-            str(retoc),
-            "--aes-key",
-            key,
-            "to-legacy",
-            str(paks_dir),
-            str(loose_root),
-            "--no-shaders",
-            "--no-script-objects",
-            "--version",
-            "UE4_27",
-        ]
-        for member in batch:
-            arguments.extend(("--filter", member))
+    base_arguments = [
+        str(retoc),
+        "--aes-key",
+        key,
+        "to-legacy",
+        str(paks_dir),
+        str(loose_root),
+        "--no-shaders",
+        "--no-script-objects",
+        "--version",
+        "UE4_27",
+    ]
+    for arguments in _filter_argument_batches(base_arguments, selected):
         result = run_secret_command(arguments, secret=key, timeout=1200)
         if result.returncode:
             # retoc may echo its invocation, including the key. Never attach its output.
@@ -165,7 +227,21 @@ def _reader_environment(secret_environment_names: Sequence[str]) -> dict[str, st
     return environment
 
 
-def _run_reader(
+def _reader_icon_output_path(icons_root: Path, output_name: Any) -> Path:
+    if (
+        not isinstance(output_name, str)
+        or not output_name
+        or "\\" in output_name
+        or Path(output_name).name != output_name
+    ):
+        raise CatalogueError("semantic reader returned an unsafe icon output")
+    path = icons_root / output_name
+    if path.is_symlink() or not path.is_file():
+        raise CatalogueError("semantic reader omitted a decoded icon")
+    return path
+
+
+def _run_reader_once(
     reader: ManagedSemanticReader,
     *,
     request: Mapping[str, Any],
@@ -173,6 +249,7 @@ def _run_reader(
     work: Path,
     label: str,
     secret_environment_names: Sequence[str],
+    require_asset_success: bool = True,
 ) -> tuple[dict[str, Any], Path]:
     if work.is_symlink() or loose_root.is_symlink() or not work.is_dir() or not loose_root.is_dir():
         raise CatalogueError("semantic reader roots must be fresh normal directories")
@@ -235,10 +312,15 @@ def _run_reader(
     actual_icons = document.get("icons")
     if not isinstance(actual_assets, list) or not isinstance(actual_icons, list):
         raise CatalogueError("semantic reader response lists were malformed")
+    if any(
+        not isinstance(item, Mapping)
+        for values in (actual_assets, actual_icons, failures)
+        for item in values
+    ):
+        raise CatalogueError("semantic reader response elements were malformed")
     returned_asset_pairs = [
         (item.get("packagePath"), item.get("memberPath"))
         for item in actual_assets
-        if isinstance(item, dict)
     ]
     expected_asset_pairs = [
         (item["packagePath"], item["memberPath"]) for item in requested_assets
@@ -246,7 +328,6 @@ def _run_reader(
     returned_icon_pairs = [
         (item.get("packagePath"), item.get("outputName"))
         for item in actual_icons
-        if isinstance(item, dict)
     ]
     expected_icon_pairs = [
         (item["packagePath"], item["outputName"]) for item in requested_icons
@@ -254,9 +335,8 @@ def _run_reader(
     failure_pairs = [
         (item.get("stage"), item.get("packagePath"))
         for item in failures
-        if isinstance(item, dict)
     ]
-    if len(failure_pairs) != len(failures) or any(
+    if any(
         stage not in {"asset", "icon"} or not isinstance(package, str)
         for stage, package in failure_pairs
     ):
@@ -291,9 +371,192 @@ def _run_reader(
         package for stage, package in failure_pairs if stage == "icon"
     }:
         raise CatalogueError("semantic reader both succeeded and failed an icon")
-    if requested_assets and not actual_assets:
+    for item in actual_icons:
+        _reader_icon_output_path(icons_root, item.get("outputName"))
+    if require_asset_success and requested_assets and not actual_assets:
         raise CatalogueError("semantic reader could not parse any requested assets")
     return document, icons_root
+
+
+def _reader_shard_count(request_count: int, jobs: int) -> int:
+    if (
+        isinstance(jobs, bool)
+        or not isinstance(jobs, int)
+        or not 1 <= jobs <= MAX_SEMANTIC_READER_JOBS
+    ):
+        raise CatalogueError(
+            f"semantic reader jobs must be between 1 and {MAX_SEMANTIC_READER_JOBS}"
+        )
+    return min(jobs, max(1, request_count // _READER_MIN_REQUESTS_PER_JOB))
+
+
+def _run_reader(
+    reader: ManagedSemanticReader,
+    *,
+    request: Mapping[str, Any],
+    loose_root: Path,
+    work: Path,
+    label: str,
+    secret_environment_names: Sequence[str],
+    jobs: int = 1,
+) -> tuple[dict[str, Any], Path]:
+    """Run one or more isolated reader processes and merge their results."""
+
+    requested_assets = request.get("assets")
+    requested_icons = request.get("icons")
+    if not isinstance(requested_assets, list) or not isinstance(requested_icons, list):
+        raise CatalogueError("semantic reader request lists were malformed")
+    shard_count = _reader_shard_count(len(requested_assets) + len(requested_icons), jobs)
+    if shard_count == 1:
+        return _run_reader_once(
+            reader,
+            request=request,
+            loose_root=loose_root,
+            work=work,
+            label=label,
+            secret_environment_names=secret_environment_names,
+        )
+
+    if (
+        work.is_symlink()
+        or loose_root.is_symlink()
+        or not work.is_dir()
+        or not loose_root.is_dir()
+    ):
+        raise CatalogueError("semantic reader roots must be fresh normal directories")
+    if work.resolve() == loose_root.resolve() or work.resolve().is_relative_to(
+        loose_root.resolve()
+    ):
+        raise CatalogueError("semantic reader work and asset roots must be disjoint")
+
+    # Validate identities across the complete request before partitioning them.
+    asset_packages = [
+        item.get("packagePath") for item in requested_assets if isinstance(item, dict)
+    ]
+    asset_members = [
+        item.get("memberPath") for item in requested_assets if isinstance(item, dict)
+    ]
+    icon_packages = [
+        item.get("packagePath") for item in requested_icons if isinstance(item, dict)
+    ]
+    icon_members = [
+        item.get("memberPath") for item in requested_icons if isinstance(item, dict)
+    ]
+    icon_outputs = [
+        item.get("outputName") for item in requested_icons if isinstance(item, dict)
+    ]
+    if (
+        len(asset_packages) != len(requested_assets)
+        or len(icon_packages) != len(requested_icons)
+        or len(set(asset_packages)) != len(asset_packages)
+        or len(set(asset_members)) != len(asset_members)
+        or len(set(icon_packages)) != len(icon_packages)
+        or len(set(icon_members)) != len(icon_members)
+        or len(set(icon_outputs)) != len(icon_outputs)
+    ):
+        raise CatalogueError("semantic reader request identities must be complete and unique")
+
+    shard_root = work / f"{label}-shards"
+    try:
+        shard_root.mkdir()
+        shard_work = [shard_root / f"{index:03d}" for index in range(shard_count)]
+        for directory in shard_work:
+            directory.mkdir()
+    except OSError as exc:
+        raise CatalogueError("semantic reader shard roots could not be created") from exc
+
+    asset_shards: list[list[Any]] = [[] for _ in range(shard_count)]
+    icon_shards: list[list[Any]] = [[] for _ in range(shard_count)]
+    for index, item in enumerate(requested_assets):
+        asset_shards[index % shard_count].append(item)
+    for index, item in enumerate(requested_icons):
+        icon_shards[index % shard_count].append(item)
+
+    def run_shard(index: int) -> tuple[dict[str, Any], Path]:
+        shard_request = {
+            **request,
+            "assets": asset_shards[index],
+            "icons": icon_shards[index],
+        }
+        return _run_reader_once(
+            reader,
+            request=shard_request,
+            loose_root=loose_root,
+            work=shard_work[index],
+            label="reader",
+            secret_environment_names=secret_environment_names,
+            require_asset_success=False,
+        )
+
+    with ThreadPoolExecutor(max_workers=shard_count, thread_name_prefix="semantic-reader") as pool:
+        futures = [pool.submit(run_shard, index) for index in range(shard_count)]
+        shard_results = [future.result() for future in futures]
+
+    merged_assets: list[dict[str, Any]] = []
+    merged_icons: list[dict[str, Any]] = []
+    merged_failures: list[dict[str, Any]] = []
+    metadata: dict[str, Any] | None = None
+    for document, _ in shard_results:
+        shard_metadata = {
+            key: value
+            for key, value in document.items()
+            if key not in {"assets", "icons", "failures"}
+        }
+        if metadata is None:
+            metadata = shard_metadata
+        elif shard_metadata != metadata:
+            raise CatalogueError("semantic reader shards returned inconsistent metadata")
+        merged_assets.extend(document["assets"])
+        merged_icons.extend(document["icons"])
+        merged_failures.extend(document["failures"])
+
+    merged_assets.sort(key=lambda item: item["packagePath"])
+    merged_icons.sort(key=lambda item: item["packagePath"])
+    merged_failures.sort(key=lambda item: (item["packagePath"], item["stage"]))
+    merged = {
+        **(metadata or {"schemaVersion": 1}),
+        "assets": merged_assets,
+        "icons": merged_icons,
+        "failures": merged_failures,
+    }
+
+    # Reuse the complete-request outcome rules, including exact global
+    # success/failure partitioning.  The subprocess already wrote each shard;
+    # this validation is deliberately independent of filesystem layout.
+    expected_assets = set(asset_packages)
+    expected_icons = set(icon_packages)
+    returned_assets = {item.get("packagePath") for item in merged_assets}
+    returned_icons = {item.get("packagePath") for item in merged_icons}
+    failed_assets = {
+        item.get("packagePath") for item in merged_failures if item.get("stage") == "asset"
+    }
+    failed_icons = {
+        item.get("packagePath") for item in merged_failures if item.get("stage") == "icon"
+    }
+    if returned_assets | failed_assets != expected_assets:
+        raise CatalogueError("semantic reader did not partition every requested asset")
+    if returned_icons | failed_icons != expected_icons:
+        raise CatalogueError("semantic reader did not partition every requested icon")
+    if returned_assets & failed_assets:
+        raise CatalogueError("semantic reader both succeeded and failed an asset")
+    if returned_icons & failed_icons:
+        raise CatalogueError("semantic reader both succeeded and failed an icon")
+    if requested_assets and not merged_assets:
+        raise CatalogueError("semantic reader could not parse any requested assets")
+
+    icons_root = work / f"{label}-icons"
+    try:
+        icons_root.mkdir()
+        for document, source_root in shard_results:
+            for item in document["icons"]:
+                output_name = item["outputName"]
+                source = _reader_icon_output_path(source_root, output_name)
+                shutil.copyfile(source, icons_root / output_name)
+    except CatalogueError:
+        raise
+    except OSError as exc:
+        raise CatalogueError("semantic reader icons could not be merged") from exc
+    return merged, icons_root
 
 
 def _import_package(asset: Mapping[str, Any], index: Any) -> str | None:
@@ -2426,7 +2689,6 @@ def normalize_semantic_document(
 def apply_semantic_evidence(
     *,
     candidates: dict[str, Any],
-    catalogue: dict[str, Any],
     semantic: Mapping[str, Any],
 ) -> None:
     """Attach planner-useful semantic fields and stable cross-document identities."""
@@ -2486,36 +2748,6 @@ def apply_semantic_evidence(
                 removed.add("localizedDisplayName")
             candidate["missingFields"] = [value for value in missing if value not in removed]
 
-    categories = catalogue.get("records")
-    if not isinstance(categories, dict):
-        return
-    for records in categories.values():
-        if not isinstance(records, list):
-            continue
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            resolved = semantic_by_id.get(record.get("id"))
-            if not resolved:
-                continue
-            record["semanticRecord"] = {
-                "document": "semantic-assets.json",
-                "id": resolved["id"],
-                "status": resolved.get("status"),
-            }
-            for field in fields:
-                if field not in resolved:
-                    continue
-                # Reviewed player-facing override names may intentionally differ
-                # from internal serialized class names. Other semantic fields are
-                # direct asset evidence and can be attached without guessing.
-                if field == "displayName" and "displayName" in record:
-                    record["serializedDisplayName"] = resolved[field]
-                elif field == "compatibility" and "compatibility" in record:
-                    record["semanticCompatibility"] = copy.deepcopy(resolved[field])
-                else:
-                    record[field] = copy.deepcopy(resolved[field])
-
 
 def _extract_blueprint_parent_assets(
     *,
@@ -2528,6 +2760,7 @@ def _extract_blueprint_parent_assets(
     loose_root: Path,
     work: Path,
     secret_environment_names: Sequence[str],
+    jobs: int = 1,
     label_prefix: str = "blueprint-parents",
     stop_at_authored_properties: frozenset[str] = frozenset(),
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
@@ -2595,6 +2828,7 @@ def _extract_blueprint_parent_assets(
             work=work,
             label=f"{label_prefix}-{round_index}",
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         parsed = [item for item in result.get("assets", []) if isinstance(item, dict)]
         for item in parsed:
@@ -2634,6 +2868,7 @@ def _extract_collection_document(
     work: Path,
     source_fingerprint: str,
     secret_environment_names: Sequence[str],
+    jobs: int = 1,
 ) -> tuple[dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
     """Read the live hub store and only the product graph reachable from it."""
 
@@ -2660,6 +2895,7 @@ def _extract_collection_document(
         work=work,
         label="collection-store",
         secret_environment_names=secret_environment_names,
+        jobs=jobs,
     )
     store_assets = [
         item for item in store_result.get("assets", []) if isinstance(item, dict)
@@ -2716,6 +2952,7 @@ def _extract_collection_document(
             work=work,
             label=f"collection-products-{round_index}",
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         parsed = [item for item in result.get("assets", []) if isinstance(item, dict)]
         for item in parsed:
@@ -2780,6 +3017,7 @@ def _extract_kit_membership_index(
     loose_root: Path,
     work: Path,
     secret_environment_names: Sequence[str],
+    jobs: int = 1,
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     """Read canonical class-unlock rewards and map them to KitUnlock records."""
 
@@ -2818,6 +3056,7 @@ def _extract_kit_membership_index(
         work=work,
         label="kit-membership-sources",
         secret_environment_names=secret_environment_names,
+        jobs=jobs,
     )
     source_assets = {
         item["packagePath"]: item
@@ -2873,6 +3112,7 @@ def _extract_kit_membership_index(
             work=work,
             label="kit-membership-registry-imports",
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         for item in imported_result.get("assets", []):
             if isinstance(item, dict) and isinstance(item.get("packagePath"), str):
@@ -2897,6 +3137,7 @@ def _extract_kit_membership_index(
         loose_root=loose_root,
         work=work,
         secret_environment_names=secret_environment_names,
+        jobs=jobs,
         label_prefix="kit-membership-parents",
         stop_at_authored_properties=frozenset({"RewardTable"}),
     )
@@ -2961,6 +3202,7 @@ def _extract_kit_membership_index(
             work=work,
             label=f"kit-membership-reward-dependencies-{round_index}",
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         for item in result.get("assets", []):
             if isinstance(item, dict) and isinstance(item.get("packagePath"), str):
@@ -3034,6 +3276,7 @@ def _extract_progression_perk_index(
     loose_root: Path,
     work: Path,
     secret_environment_names: Sequence[str],
+    jobs: int = 1,
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     """Read the authored progression registry and its reachable table graph."""
 
@@ -3063,6 +3306,7 @@ def _extract_progression_perk_index(
         work=work,
         label="progression-settings",
         secret_environment_names=secret_environment_names,
+        jobs=jobs,
     )
     settings_assets = [
         item for item in settings_result.get("assets", []) if isinstance(item, dict)
@@ -3112,6 +3356,7 @@ def _extract_progression_perk_index(
             work=work,
             label=f"progression-reward-tables-{round_index}",
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         parsed = [item for item in result.get("assets", []) if isinstance(item, dict)]
         for item in parsed:
@@ -3153,6 +3398,7 @@ def build_semantic_assets(
     candidates: Mapping[str, Any],
     source_fingerprint: str,
     secret_environment_names: Sequence[str] = (),
+    jobs: int = 1,
 ) -> SemanticBuild:
     """Convert catalogue semantics and the source-derived perk-grid UI bundle."""
 
@@ -3202,6 +3448,7 @@ def build_semantic_assets(
             work=work,
             label="candidates",
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         first_assets = first.get("assets", [])
         first_failures = [*missing_candidate_failures, *first.get("failures", [])]
@@ -3216,6 +3463,7 @@ def build_semantic_assets(
             loose_root=loose,
             work=work,
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         collection_document, collection_failures, collection_wrapper_assets = (
             _extract_collection_document(
@@ -3232,6 +3480,7 @@ def build_semantic_assets(
                 work=work,
                 source_fingerprint=source_fingerprint,
                 secret_environment_names=secret_environment_names,
+                jobs=jobs,
             )
         )
         progression_perks, progression_failures = _extract_progression_perk_index(
@@ -3246,6 +3495,7 @@ def build_semantic_assets(
             loose_root=loose,
             work=work,
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         collection_document["progressionPerks"] = progression_perks
         collection_document["coverage"]["progressionPerks"] = len(
@@ -3317,6 +3567,7 @@ def build_semantic_assets(
             loose_root=loose,
             work=work,
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         collection_document["kitMembership"] = kit_membership
         collection_document["coverage"]["kitMembership"] = len(
@@ -3448,6 +3699,7 @@ def build_semantic_assets(
             work=work,
             label="dependencies",
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         dependency_failures.extend(
             item for item in second.get("failures", []) if isinstance(item, dict)
@@ -3508,6 +3760,7 @@ def build_semantic_assets(
                 work=work,
                 label="class-display-icons",
                 secret_environment_names=secret_environment_names,
+                jobs=jobs,
             )
             dependency_failures.extend(
                 item
@@ -3554,6 +3807,7 @@ def build_semantic_assets(
             work=work,
             label="grid-widgets",
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         grid_widget_assets = [
             item for item in grid_widgets.get("assets", []) if isinstance(item, dict)
@@ -3587,6 +3841,7 @@ def build_semantic_assets(
             work=work,
             label="grid-textures",
             secret_environment_names=secret_environment_names,
+            jobs=jobs,
         )
         grid_failures.extend(
             item for item in grid_textures.get("failures", []) if isinstance(item, dict)
@@ -3663,6 +3918,7 @@ def build_semantic_assets(
 
 
 __all__ = [
+    "MAX_SEMANTIC_READER_JOBS",
     "SemanticBuild",
     "apply_semantic_evidence",
     "build_semantic_assets",

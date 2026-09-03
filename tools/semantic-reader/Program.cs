@@ -9,7 +9,7 @@ using SkiaSharp;
 using UAssetAPI;
 using UAssetAPI.UnrealTypes;
 
-const string ReaderVersion = "0.3.0";
+const string ReaderVersion = "0.3.1";
 
 if (args is ["--version"])
 {
@@ -62,7 +62,11 @@ try
         {
             ValidateAssetRequest(item);
             var path = ResolveContainedPath(inputRoot, item.MemberPath);
-            var asset = new UAsset(path, EngineVersion.VER_UE4_27);
+            var asset = new UAsset(
+                path,
+                EngineVersion.VER_UE4_27,
+                customSerializationFlags: CustomSerializationFlags.SkipPreloadDependencyLoading
+            );
             var serialized = JObject.Parse(asset.SerializeJson(Formatting.None));
             output.Assets.Add(TrimAsset(item, serialized, asset));
         }
@@ -112,44 +116,50 @@ try
             StringComparer.OrdinalIgnoreCase
         ))
         {
-        provider.Initialize();
-        foreach (var item in preparedIcons)
-        {
-            try
+            provider.Initialize();
+            var providerFilesByMemberPath = BuildProviderFileLookup(
+                provider.Files.Keys,
+                preparedIcons.Select(item => item.MemberPath)
+            );
+            foreach (var item in preparedIcons)
             {
-                ValidateIconRequest(item);
-                var matchingKey = provider.Files.Keys.Single(
-                    key => key.Replace('\\', '/').EndsWith(item.MemberPath, StringComparison.OrdinalIgnoreCase)
-                );
-                var package = provider.LoadPackage(matchingKey);
-                var expectedName = Path.GetFileNameWithoutExtension(item.MemberPath);
-                var texture = package.GetExports().OfType<UTexture2D>().Single(
-                    value => string.Equals(value.Name, expectedName, StringComparison.Ordinal)
-                );
-                using var decoded = texture.Decode()
-                    ?? throw new InvalidDataException("texture had no decodable mip");
-                var destination = ResolveContainedPath(iconRoot, item.OutputName);
-                using var encoded = new MemoryStream();
-                if (!decoded.Encode(encoded, SKEncodedImageFormat.Png, 100))
-                    throw new InvalidDataException("texture PNG encoding failed");
-                await File.WriteAllBytesAsync(destination, encoded.ToArray());
-                output.Icons.Add(new ReaderIcon(
-                    item.PackagePath,
-                    item.OutputName,
-                    decoded.Width,
-                    decoded.Height,
-                    texture.PlatformData.PixelFormat.ToString()
-                ));
+                try
+                {
+                    ValidateIconRequest(item);
+                    var matchingKeys = providerFilesByMemberPath.TryGetValue(
+                        item.MemberPath,
+                        out var matches
+                    ) ? matches : [];
+                    var matchingKey = matchingKeys.Single();
+                    var package = provider.LoadPackage(matchingKey);
+                    var expectedName = Path.GetFileNameWithoutExtension(item.MemberPath);
+                    var texture = package.GetExports().OfType<UTexture2D>().Single(
+                        value => string.Equals(value.Name, expectedName, StringComparison.Ordinal)
+                    );
+                    using var decoded = texture.Decode()
+                        ?? throw new InvalidDataException("texture had no decodable mip");
+                    var destination = ResolveContainedPath(iconRoot, item.OutputName);
+                    using var encoded = new MemoryStream();
+                    if (!decoded.Encode(encoded, SKEncodedImageFormat.Png, 100))
+                        throw new InvalidDataException("texture PNG encoding failed");
+                    await File.WriteAllBytesAsync(destination, encoded.ToArray());
+                    output.Icons.Add(new ReaderIcon(
+                        item.PackagePath,
+                        item.OutputName,
+                        decoded.Width,
+                        decoded.Height,
+                        texture.PlatformData.PixelFormat.ToString()
+                    ));
+                }
+                catch (Exception exception)
+                {
+                    output.Failures.Add(new ReaderFailure(
+                        "icon",
+                        item.PackagePath,
+                        $"decode-failed:{exception.GetType().Name}"
+                    ));
+                }
             }
-            catch (Exception exception)
-            {
-                output.Failures.Add(new ReaderFailure(
-                    "icon",
-                    item.PackagePath,
-                    $"decode-failed:{exception.GetType().Name}"
-                ));
-            }
-        }
         }
         Directory.Delete(providerRoot, recursive: true);
     }
@@ -215,6 +225,46 @@ static string ResolveContainedPath(string root, string relative)
     if (!candidate.StartsWith(prefix, StringComparison.Ordinal))
         throw new InvalidDataException("relative path escaped its root");
     return candidate;
+}
+
+static Dictionary<string, List<string>> BuildProviderFileLookup(
+    IEnumerable<string> providerKeys,
+    IEnumerable<string> requestedMemberPaths
+)
+{
+    const string gameContentPrefix = "AFE2/Content/";
+    var requested = requestedMemberPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var lookup = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+    // Validated member paths all start with this prefix. Scanning its occurrences once
+    // preserves the old case-insensitive EndsWith match, including zero/duplicate matches.
+    foreach (var (providerKey, normalized) in providerKeys
+        .Select(key => (ProviderKey: key, Normalized: key.Replace('\\', '/')))
+        .OrderBy(item => item.Normalized, StringComparer.Ordinal)
+        .ThenBy(item => item.ProviderKey, StringComparer.Ordinal))
+    {
+        var searchFrom = 0;
+        while (searchFrom < normalized.Length)
+        {
+            var prefixIndex = normalized.IndexOf(
+                gameContentPrefix,
+                searchFrom,
+                StringComparison.OrdinalIgnoreCase
+            );
+            if (prefixIndex < 0) break;
+            var candidate = normalized[prefixIndex..];
+            if (requested.Contains(candidate))
+            {
+                if (!lookup.TryGetValue(candidate, out var matches))
+                {
+                    matches = [];
+                    lookup.Add(candidate, matches);
+                }
+                matches.Add(providerKey);
+            }
+            searchFrom = prefixIndex + 1;
+        }
+    }
+    return lookup;
 }
 
 static ReaderAsset TrimAsset(AssetRequest request, JObject serialized, UAsset asset)
@@ -313,7 +363,7 @@ sealed record ReaderFailure(string Stage, string PackagePath, string Reason);
 sealed class ReaderOutput
 {
     public int SchemaVersion { get; } = 1;
-    public string ReaderVersion { get; } = "0.3.0";
+    public string ReaderVersion { get; } = "0.3.1";
     public List<ReaderAsset> Assets { get; } = [];
     public List<ReaderIcon> Icons { get; } = [];
     public List<ReaderFailure> Failures { get; } = [];

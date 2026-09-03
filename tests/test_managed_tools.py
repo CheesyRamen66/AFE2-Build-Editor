@@ -365,6 +365,18 @@ class ManagedToolCliTests(unittest.TestCase):
             )
         self.assertIn("not allowed with argument", stderr.getvalue())
 
+    def test_extract_jobs_default_is_conservative_and_rejects_nonpositive_values(self) -> None:
+        with mock.patch("afe2_catalogue.cli.os.cpu_count", return_value=8):
+            parser = build_parser()
+
+        self.assertEqual(parser.parse_args(["extract"]).jobs, 4)
+        self.assertEqual(parser.parse_args(["extract", "--jobs", "2"]).jobs, 2)
+        for value in ("0", "-1", "17", "nope"):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+                parser.parse_args(["extract", "--jobs", value])
+            self.assertIn("jobs must be a positive integer", stderr.getvalue())
+
     def test_managed_provenance_is_added_to_adapter(self) -> None:
         spec = ToolSpec(
             name="synthetic",

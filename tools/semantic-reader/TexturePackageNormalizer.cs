@@ -32,7 +32,11 @@ internal static class TexturePackageNormalizer
         if (!File.Exists(destinationAsset))
             throw new FileNotFoundException("texture package omitted its uasset");
 
-        var asset = new UAsset(destinationAsset, EngineVersion.VER_UE4_27);
+        var asset = new UAsset(
+            destinationAsset,
+            EngineVersion.VER_UE4_27,
+            customSerializationFlags: CustomSerializationFlags.SkipPreloadDependencyLoading
+        );
         if (asset.Exports.Count != 1)
             throw new InvalidDataException("texture package did not have exactly one export");
         var export = asset.Exports[0];

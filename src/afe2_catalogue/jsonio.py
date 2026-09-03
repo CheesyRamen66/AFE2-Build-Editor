@@ -17,17 +17,6 @@ from .errors import CatalogueError
 
 PUBLICATION_MANIFEST = "publication.json"
 PUBLICATION_PRODUCER = "afe2-catalogue"
-LEGACY_GENERATED_FILENAMES = frozenset(
-    {
-        "candidate-records.json",
-        "catalogue.json",
-        "changes.json",
-        "override-activity.json",
-        "package-index.json",
-        "source-manifest.json",
-        "validation.json",
-    }
-)
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -173,23 +162,9 @@ def _managed_filenames(output: Path) -> set[str]:
 
     marker = entries.get(PUBLICATION_MANIFEST)
     if marker is None:
-        # One-time migration for publications made before publication.json was
-        # introduced. Requiring the complete historical set plus our extractor
-        # identity avoids claiming an arbitrary directory of JSON files.
-        if set(entries) != LEGACY_GENERATED_FILENAMES or directories:
-            unexpected = (
-                sorted((set(entries) - LEGACY_GENERATED_FILENAMES) | directories)
-                or sorted(entries)
-            )
-            raise CatalogueError(
-                "refusing to replace output containing unexpected entries: "
-                + ", ".join(unexpected)
-            )
-        manifest = read_json(output / "source-manifest.json")
-        extractor = manifest.get("extractor") if isinstance(manifest, dict) else None
-        if not isinstance(extractor, dict) or extractor.get("name") != PUBLICATION_PRODUCER:
-            raise CatalogueError("refusing to replace output not owned by afe2-catalogue")
-        return set(entries)
+        raise CatalogueError(
+            "refusing to replace output without an afe2-catalogue publication marker"
+        )
 
     publication = read_json(marker)
     if (

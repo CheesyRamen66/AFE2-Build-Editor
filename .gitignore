@@ -20,6 +20,9 @@ AssetRegistry.bin
 aes.txt
 AES.txt
 *.key
+.env
+.env.*
+!.env.example
 AI/
 
 # Python

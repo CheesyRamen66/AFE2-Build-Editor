@@ -1,4 +1,4 @@
-"""Deterministic catalogue diffs for game updates."""
+"""Deterministic flat-record diffs for game updates."""
 
 from __future__ import annotations
 
@@ -7,22 +7,21 @@ from typing import Any
 from .errors import CatalogueError
 
 
-def _flatten(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
-    records = document.get("records", {})
-    if not isinstance(records, dict):
-        raise CatalogueError("catalogue has no records object")
-    for kind, values in records.items():
-        if not isinstance(values, list):
-            raise CatalogueError(f"catalogue category is not an array: {kind}")
-        for record in values:
-            if not isinstance(record, dict) or not isinstance(record.get("id"), str):
-                raise CatalogueError(f"catalogue category has an invalid record: {kind}")
-            record_id = record["id"]
-            if record_id in result:
-                raise CatalogueError(f"catalogue contains duplicate ID: {record_id}")
-            result[record_id] = record
-    return result
+def document_records(document: dict[str, Any], *, label: str = "document") -> list[dict[str, Any]]:
+    """Return a document's canonical flat record array."""
+
+    records = document.get("records")
+    if not isinstance(records, list):
+        raise CatalogueError(f"{label} has no flat records array")
+    # Validate eagerly so callers cannot accidentally publish a misleading diff.
+    seen: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict) or not isinstance(record.get("id"), str):
+            raise CatalogueError(f"{label} contains an invalid record")
+        if record["id"] in seen:
+            raise CatalogueError(f"{label} contains duplicate ID: {record['id']}")
+        seen.add(record["id"])
+    return records
 
 
 def _field_changes(old: Any, new: Any, pointer: str = "") -> list[dict[str, Any]]:
@@ -72,10 +71,16 @@ def diff_record_lists(
     }
 
 
-def diff_catalogues(old: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
-    old_records = _flatten(old) if old else {}
-    new_records = _flatten(new)
-    changes = diff_record_lists(list(old_records.values()), list(new_records.values()))
+def diff_documents(old: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
+    """Diff two planner or candidate documents with flat ``records`` arrays."""
+
+    old_records = (
+        document_records(old, label="old record document")
+        if old is not None
+        else None
+    )
+    new_records = document_records(new, label="new record document")
+    changes = diff_record_lists(old_records, new_records)
     return {
         "schemaVersion": 1,
         **changes,

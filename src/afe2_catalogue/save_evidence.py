@@ -1,6 +1,6 @@
 """Read-only, privacy-filtered evidence extraction from an AFE2 character save.
 
-Save data is deliberately kept separate from the canonical catalogue.  A save
+Save data is deliberately kept separate from the planner catalogue. A save
 can prove that an asset was observed in a particular role, but its absence can
 never prove that the asset does not exist or is not player-usable.
 """
@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
+from .diffing import document_records
 from .errors import CatalogueError
 
 
@@ -188,24 +189,12 @@ class _AssetObservation:
     general_inventory_count: int = 0
 
 
-def _catalogue_records(document: dict[str, Any]) -> list[dict[str, Any]]:
-    categories = document.get("records")
-    if not isinstance(categories, dict):
-        raise CatalogueError("catalogue has no records object")
-    result: list[dict[str, Any]] = []
-    for values in categories.values():
-        if not isinstance(values, list):
-            raise CatalogueError("catalogue record category must be an array")
-        result.extend(record for record in values if isinstance(record, dict))
-    return result
-
-
 def _document_fingerprint(*documents: dict[str, Any]) -> str:
     fingerprints = [document.get("sourceFingerprint") for document in documents]
     if not all(isinstance(value, str) and value for value in fingerprints):
-        raise CatalogueError("catalogue evidence inputs need source fingerprints")
+        raise CatalogueError("save-evidence inputs need source fingerprints")
     if len(set(fingerprints)) != 1:
-        raise CatalogueError("catalogue evidence inputs have different source fingerprints")
+        raise CatalogueError("save-evidence inputs have different source fingerprints")
     return fingerprints[0]
 
 
@@ -361,17 +350,38 @@ def _record_inventory(save: dict[str, Any], assets: dict[str, _AssetObservation]
 
 def _kit_aliases(
     assets: dict[str, _AssetObservation],
-    catalogue_records: list[dict[str, Any]],
-) -> list[dict[str, str]]:
+    planner_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    kits_by_character_class: dict[str, list[dict[str, Any]]] = {}
     kits_by_internal_name: dict[str, list[dict[str, Any]]] = {}
-    for record in catalogue_records:
-        if record.get("kind") != "kit" or not isinstance(record.get("internalName"), str):
+    for record in planner_records:
+        if record.get("kind") != "kit":
             continue
-        kits_by_internal_name.setdefault(record["internalName"].casefold(), []).append(record)
+        character_class = record.get("characterClassPackagePath")
+        if isinstance(character_class, str):
+            kits_by_character_class.setdefault(character_class, []).append(record)
+        internal_name = record.get("internalName")
+        if not isinstance(internal_name, str):
+            kit_id = record.get("id")
+            if isinstance(kit_id, str):
+                internal_name = kit_id.rsplit("/", 1)[-1].removeprefix("KitUnlock_")
+        if isinstance(internal_name, str) and internal_name:
+            kits_by_internal_name.setdefault(internal_name.casefold(), []).append(record)
 
-    result: list[dict[str, str]] = []
+    result: list[dict[str, Any]] = []
     for asset_id, observation in assets.items():
         if not ({"character-kit-class", "last-played-kit-class"} & set(observation.roles)):
+            continue
+        exact_matches = kits_by_character_class.get(asset_id, [])
+        if len(exact_matches) == 1 and isinstance(exact_matches[0].get("id"), str):
+            result.append(
+                {
+                    "characterClassId": asset_id,
+                    "confidence": "authored-reference",
+                    "method": "character-class-package-path",
+                    "plannerKitId": exact_matches[0]["id"],
+                }
+            )
             continue
         basename = asset_id.rsplit("/", 1)[-1]
         internal_name = basename.removeprefix("Player_")
@@ -381,14 +391,14 @@ def _kit_aliases(
             continue
         result.append(
             {
-                "catalogueKitId": matches[0]["id"],
                 "characterClassId": asset_id,
                 "confidence": "name-heuristic",
-                "internalName": matches[0]["internalName"],
+                "internalName": internal_name,
                 "method": "player-class-to-internal-name",
+                "plannerKitId": matches[0]["id"],
             }
         )
-    return sorted(result, key=lambda item: (item["characterClassId"], item["catalogueKitId"]))
+    return sorted(result, key=lambda item: (item["characterClassId"], item["plannerKitId"]))
 
 
 def build_save_evidence(
@@ -397,7 +407,7 @@ def build_save_evidence(
     normalization: str,
     package_index: dict[str, Any],
     candidates: dict[str, Any],
-    catalogue: dict[str, Any],
+    planner_catalogue: dict[str, Any],
 ) -> dict[str, Any]:
     """Build deterministic positive evidence for every ``/Game`` asset in a save."""
 
@@ -407,8 +417,8 @@ def build_save_evidence(
         raise CatalogueError("package index has no packages array")
     if not isinstance(candidate_records, list):
         raise CatalogueError("candidate document has no records array")
-    resolved_records = _catalogue_records(catalogue)
-    source_fingerprint = _document_fingerprint(package_index, candidates, catalogue)
+    planner_records = document_records(planner_catalogue, label="planner catalogue")
+    source_fingerprint = _document_fingerprint(package_index, candidates, planner_catalogue)
 
     package_ids = {
         package.get("packagePath")
@@ -423,12 +433,12 @@ def build_save_evidence(
         kind = record.get("kind")
         if isinstance(asset_id, str) and isinstance(kind, str):
             candidate_kinds.setdefault(asset_id, set()).add(kind)
-    catalogue_kinds: dict[str, set[str]] = {}
-    for record in resolved_records:
-        asset_id = record.get("id")
+    planner_kinds: dict[str, set[str]] = {}
+    for record in planner_records:
+        asset_id = record.get("packagePath") or record.get("id")
         kind = record.get("kind")
         if isinstance(asset_id, str) and isinstance(kind, str):
-            catalogue_kinds.setdefault(asset_id, set()).add(kind)
+            planner_kinds.setdefault(asset_id, set()).add(kind)
 
     assets: dict[str, _AssetObservation] = {}
     for asset_id, object_path, location in _walk_asset_references(save):
@@ -446,17 +456,15 @@ def build_save_evidence(
     _record_placements(save, assets)
     _record_weapon_usage(save, assets)
     _record_inventory(save, assets)
-    aliases = _kit_aliases(assets, resolved_records)
+    aliases = _kit_aliases(assets, planner_records)
     aliases_by_asset: dict[str, list[str]] = {}
     for alias in aliases:
-        aliases_by_asset.setdefault(alias["characterClassId"], []).append(alias["catalogueKitId"])
+        aliases_by_asset.setdefault(alias["characterClassId"], []).append(alias["plannerKitId"])
 
     records: list[dict[str, Any]] = []
     for asset_id in sorted(assets):
         observation = assets[asset_id]
         record: dict[str, Any] = {
-            "catalogueAliases": sorted(aliases_by_asset.get(asset_id, [])),
-            "catalogueKinds": sorted(catalogue_kinds.get(asset_id, set())),
             "candidateKinds": sorted(candidate_kinds.get(asset_id, set())),
             "id": asset_id,
             "kindEvidence": [
@@ -470,6 +478,8 @@ def build_save_evidence(
             ],
             "objectPaths": sorted(observation.object_paths),
             "packageIndexed": asset_id in package_ids,
+            "plannerAliases": sorted(aliases_by_asset.get(asset_id, [])),
+            "plannerKinds": sorted(planner_kinds.get(asset_id, set())),
             "saveLocations": [
                 {"occurrences": count, "path": path}
                 for path, count in sorted(observation.locations.items())
@@ -560,8 +570,8 @@ def build_save_evidence(
     unindexed = sorted(asset_id for asset_id in assets if asset_id not in package_ids)
 
     return {
-        "schemaVersion": 1,
-        "catalogueSourceFingerprint": source_fingerprint,
+        "schemaVersion": 2,
+        "plannerSourceFingerprint": source_fingerprint,
         "diagnostics": {
             **guid_diagnostics,
             "hintedButUnclassifiedPackageIds": hinted_but_unclassified,
@@ -573,7 +583,7 @@ def build_save_evidence(
             "absenceMeans": "not-observed",
             "completeness": "partial-save",
             "semanticLimits": [
-                "does-not-prove-catalogue-completeness",
+                "does-not-prove-planner-catalogue-completeness",
                 "does-not-prove-compatibility-rules",
                 "does-not-prove-grid-footprints-or-legality",
                 "does-not-prove-player-facing-names",
@@ -593,12 +603,12 @@ def build_save_evidence(
             ),
             "assets": len(assets),
             "candidateAssets": sum(asset_id in candidate_kinds for asset_id in assets),
-            "catalogueAliasedAssets": len(aliases_by_asset),
-            "catalogueAssets": sum(asset_id in catalogue_kinds for asset_id in assets),
             "distinctAssetsByKindEvidence": dict(sorted(kind_assets.items())),
             "distinctAssetsByObservedRole": dict(sorted(role_assets.items())),
             "indexedAssets": sum(asset_id in package_ids for asset_id in assets),
             "missingPackageAssets": sum(asset_id not in package_ids for asset_id in assets),
             "occurrencesByObservedRole": dict(sorted(role_occurrences.items())),
+            "plannerAliasedAssets": len(aliases_by_asset),
+            "plannerAssets": sum(asset_id in planner_kinds for asset_id in assets),
         },
     }

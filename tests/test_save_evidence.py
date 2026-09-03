@@ -130,25 +130,29 @@ def catalogue_documents() -> tuple[dict[str, object], dict[str, object], dict[st
             {"id": CANDIDATE_ONLY, "kind": "weapon", "packagePath": CANDIDATE_ONLY},
         ],
     }
-    catalogue = {
+    planner_catalogue = {
         "sourceFingerprint": "sha256:synthetic",
-        "records": {
-            "kits": [
-                {"id": KIT_UNLOCK, "internalName": "Custom", "kind": "kit"}
-            ]
-        },
+        "records": [
+            {
+                "characterClassPackagePath": KIT_CLASS,
+                "id": KIT_UNLOCK,
+                "kind": "kit",
+            },
+            {"id": WEAPON, "kind": "weapon", "packagePath": WEAPON},
+            {"id": TRAIT, "kind": "trait", "packagePath": TRAIT},
+        ],
     }
-    return package_index, candidates, catalogue
+    return package_index, candidates, planner_catalogue
 
 
 def evidence_for(save: dict[str, object] | None = None) -> dict[str, object]:
-    package_index, candidates, catalogue = catalogue_documents()
+    package_index, candidates, planner_catalogue = catalogue_documents()
     return build_save_evidence(
         synthetic_save() if save is None else save,
         normalization="none",
         package_index=package_index,
         candidates=candidates,
-        catalogue=catalogue,
+        planner_catalogue=planner_catalogue,
     )
 
 
@@ -220,6 +224,7 @@ class SaveEvidenceTests(unittest.TestCase):
         result = evidence_for()
         records = {record["id"]: record for record in result["records"]}
 
+        self.assertEqual(result["schemaVersion"], 2)
         self.assertEqual(result["scope"]["completeness"], "partial-save")
         self.assertEqual(result["scope"]["absenceMeans"], "not-observed")
         self.assertEqual(result["source"]["directIdentifiersIncluded"], False)
@@ -228,6 +233,7 @@ class SaveEvidenceTests(unittest.TestCase):
         self.assertNotIn("private-character-name", canonical_bytes(result).decode("utf-8"))
 
         self.assertEqual(records[WEAPON]["candidateKinds"], ["weapon"])
+        self.assertEqual(records[WEAPON]["plannerKinds"], ["weapon"])
         self.assertEqual(
             records[WEAPON]["weaponUsage"],
             {
@@ -265,8 +271,11 @@ class SaveEvidenceTests(unittest.TestCase):
                 "rotation": "Clockwise90",
             },
         )
-        self.assertEqual(records[KIT_CLASS]["catalogueAliases"], [KIT_UNLOCK])
-        self.assertEqual(result["kitAliases"][0]["internalName"], "Custom")
+        self.assertEqual(records[KIT_CLASS]["plannerAliases"], [KIT_UNLOCK])
+        self.assertEqual(
+            result["kitAliases"][0]["method"],
+            "character-class-package-path",
+        )
         self.assertEqual(
             records[WEAPON]["kitWeaponAssignments"],
             [{"count": 1, "kitClassId": KIT_CLASS, "savedGunSlotIndex": 0}],
@@ -318,8 +327,8 @@ class SaveEvidenceTests(unittest.TestCase):
         self.assertNotIn(marker, canonical_bytes(result).decode("utf-8"))
 
     def test_rejects_mixed_catalogue_fingerprints(self) -> None:
-        package_index, candidates, catalogue = catalogue_documents()
-        catalogue["sourceFingerprint"] = "sha256:different"
+        package_index, candidates, planner_catalogue = catalogue_documents()
+        planner_catalogue["sourceFingerprint"] = "sha256:different"
 
         with self.assertRaisesRegex(CatalogueError, "different source fingerprints"):
             build_save_evidence(
@@ -327,13 +336,29 @@ class SaveEvidenceTests(unittest.TestCase):
                 normalization="none",
                 package_index=package_index,
                 candidates=candidates,
-                catalogue=catalogue,
+                planner_catalogue=planner_catalogue,
             )
+
+    def test_rejects_malformed_or_duplicate_planner_records(self) -> None:
+        package_index, candidates, planner_catalogue = catalogue_documents()
+        for records, message in (([42], "invalid record"), ([{"id": "same"}] * 2, "duplicate ID")):
+            malformed = {**planner_catalogue, "records": records}
+            with self.subTest(message=message), self.assertRaisesRegex(
+                CatalogueError,
+                message,
+            ):
+                build_save_evidence(
+                    synthetic_save(),
+                    normalization="none",
+                    package_index=package_index,
+                    candidates=candidates,
+                    planner_catalogue=malformed,
+                )
 
 
 class SaveEvidenceCliTests(unittest.TestCase):
     def test_inspect_save_writes_a_separate_report_without_changing_inputs(self) -> None:
-        package_index, candidates, catalogue = catalogue_documents()
+        package_index, candidates, planner_catalogue = catalogue_documents()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             catalogue_root = root / "catalogue"
@@ -341,7 +366,7 @@ class SaveEvidenceCliTests(unittest.TestCase):
             for filename, document in (
                 ("package-index.json", package_index),
                 ("candidate-records.json", candidates),
-                ("catalogue.json", catalogue),
+                ("planner-catalogue.json", planner_catalogue),
             ):
                 (catalogue_root / filename).write_text(json.dumps(document), encoding="utf-8")
             save_path = root / "char.dec"
@@ -367,9 +392,10 @@ class SaveEvidenceCliTests(unittest.TestCase):
             self.assertEqual(save_path.read_bytes(), save_bytes)
             self.assertEqual(json.loads(output.read_text())["summary"]["assets"], 8)
             self.assertIn("partial save evidence", stdout.getvalue())
+            self.assertIn("planner=", stdout.getvalue())
 
     def test_inspect_save_refuses_output_inside_the_catalogue_publication(self) -> None:
-        package_index, candidates, catalogue = catalogue_documents()
+        package_index, candidates, planner_catalogue = catalogue_documents()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             catalogue_root = root / "catalogue"
@@ -377,7 +403,7 @@ class SaveEvidenceCliTests(unittest.TestCase):
             for filename, document in (
                 ("package-index.json", package_index),
                 ("candidate-records.json", candidates),
-                ("catalogue.json", catalogue),
+                ("planner-catalogue.json", planner_catalogue),
             ):
                 (catalogue_root / filename).write_text(json.dumps(document), encoding="utf-8")
             save_path = root / "char.dec"
@@ -402,7 +428,7 @@ class SaveEvidenceCliTests(unittest.TestCase):
             self.assertIn("outside the generated catalogue", stderr.getvalue())
 
     def test_inspect_save_refuses_to_replace_a_json_named_source_save(self) -> None:
-        package_index, candidates, catalogue = catalogue_documents()
+        package_index, candidates, planner_catalogue = catalogue_documents()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             catalogue_root = root / "catalogue"
@@ -410,7 +436,7 @@ class SaveEvidenceCliTests(unittest.TestCase):
             for filename, document in (
                 ("package-index.json", package_index),
                 ("candidate-records.json", candidates),
-                ("catalogue.json", catalogue),
+                ("planner-catalogue.json", planner_catalogue),
             ):
                 (catalogue_root / filename).write_text(json.dumps(document), encoding="utf-8")
             save_path = root / "character.json"

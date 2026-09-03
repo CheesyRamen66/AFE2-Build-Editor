@@ -2,7 +2,13 @@
 
 This repository currently contains the read-only catalogue-extraction foundation for an **Aliens: Fireteam Elite 2** build planner. The planner UI and build save/load work are intentionally deferred.
 
-The extractor discovers the Steam installation, indexes the game archives, classifies likely build-planner records, converts selected UE4.27 packages, reads serialized properties and effect definitions, exports PNG icons, applies reviewed overrides, validates the result, and reports catalogue changes between game updates. It never modifies the game installation.
+The extractor discovers the Steam installation, indexes the game archives, classifies likely build-planner records, converts selected UE4.27 packages, reads serialized properties and effect definitions, exports PNG icons, validates the result, and reports catalogue changes between game updates. It never modifies the game installation.
+
+## Start here
+
+If you just want to install, run, update, or troubleshoot the extractor, use
+the plain-language [operator runbook](RUNBOOK.md). The rest of this README is
+the technical reference for the extraction model and generated data contract.
 
 ## Current boundary
 
@@ -18,13 +24,10 @@ Package paths are exact game evidence, but a matching path alone does not prove 
 - `collection-assets.json` is the canonical player-visible index. It resolves the authored `Store_MainHub_Credits` categories through product and reward wrappers to their terminal records, separately traces starting and earned class-unlock rewards to exact kit records under `kitMembership`, and audits every observed Collection category as included, deliberately ignored, or unknown. It preserves membership, acquisition evidence, and fail-closed unresolved references for both routes.
 - `grid-assets.json` inventories the source-derived PerkGrid art, widget/layout definitions, shared brush dependencies, palette, dimensions, and rendering lookup contract. Its PNG and serialized-widget artifacts live under `grid-assets/`.
 - `planner-catalogue.json` is the flat, fail-closed projection consumed by the v0 editor. It combines canonical Store and kit membership, class-authored abilities and perk unlock evidence, and normalized progression rewards, and contains only editor-selectable identities and relationships. Every record carries authored player-facing text; package paths remain stable IDs, never fallback labels.
-- `catalogue.json` contains only records explicitly promoted by the reviewed override file, with `identity-only`, `partial`, or `resolved` status.
-- Unresolved candidates remain visible in validation; they are never silently discarded.
+- Path candidates that are not admitted by authored game data remain available in the evidence layers; they are never silently promoted into the editor dataset.
 
 The build editor reads `planner-catalogue.json`, not the path-classified
-candidate superset or the override-backed review catalogue. The override file
-can preserve evidence for unusual assets such as Priming Chamber, but it cannot
-make an asset editor-selectable. A record enters the planner only through an
+candidate superset. A record enters the planner only through an
 authored player-facing source: canonical Store membership, canonical
 starting/earned kit membership, a class's ability or `ChipEntitlements` lists
 after that class's kit has been admitted, or another explicitly normalized
@@ -66,6 +69,12 @@ An existing `retoc manifest` export can be parsed with `--manifest /path/to/paks
 
 Semantic extraction is archive-candidate based, not save-observation based: every classified candidate is requested even if it never appeared in the supplied character save. Use `--no-semantic-assets` only when package conversion/icon extraction is intentionally out of scope.
 
+Large semantic-reader requests are split across isolated .NET child processes.
+`--jobs N` controls the upper bound (`1` through `16`); the default is half of
+the detected logical CPUs, capped at four. Use `--jobs 1` for a serial diagnostic
+run. Small graph-traversal requests remain serial, and `retoc` keeps its own
+internal Rayon parallelism. Output is independent of the selected job count.
+
 ## Inspect a partial character save
 
 A readable `char.dec` can add positive, per-asset evidence without becoming the
@@ -85,7 +94,7 @@ a Steam profile or writes account IDs, names, GUIDs, timestamps, or the save's
 absolute path to the report.
 
 `save-evidence.json` records every referenced `/Game` asset, its normalized
-package ID, safe save contexts, exact package/candidate/catalogue joins, saved
+package ID, safe save contexts, exact package/candidate/planner joins, saved
 perk placements and rotations, weapon-component pairings, inventory fields, and
 reviewable kit-class aliases. It is deliberately marked `partial-save` and
 `absenceMeans: not-observed`: an asset missing from one player's save is never
@@ -113,7 +122,7 @@ Never commit keys, extracted assets, `pakstore.json`, or generated `.local/` out
 
 ## Generated files
 
-An extraction publishes these files together:
+A default semantic extraction publishes these files together:
 
 - `source-manifest.json` — game build, archive inventory, adapter versions, coverage, and source fingerprint
 - `package-index.json` — exact IoStore packages/chunks plus PAK member paths
@@ -125,10 +134,8 @@ An extraction publishes these files together:
 - `grid-assets.json` — deterministic PerkGrid asset manifest, exact texture/widget dependencies, dimensions, family/footprint labels, palette, render-order contract, failures, and coverage
 - `grid-assets/textures/*.png` — dedicated chip, frame, connector, lock-region, slot, background, and interaction art plus every directly imported shared UI texture
 - `grid-assets/widgets/*.json` — serialized board/placement/connector/slot/lock/frame/helper definitions, including WidgetTree properties and Kismet bytecode needed to recover layout, state behavior, and palette constants
-- `catalogue.json` — override-backed records with explicit `identity-only`, `partial`, or `resolved` status
-- `override-activity.json` — every applied, skipped, and suppressed override
-- `validation.json` — structural errors, coverage warnings, counts, and unresolved candidates
-- `changes.json` — sorted added, removed, and field-level changed catalogue and candidate records, plus unresolved-candidate changes, versus `--baseline` or the previous output
+- `validation.json` — structural errors, coverage warnings, and source/editor record counts
+- `changes.json` — schema-v2, sorted added/removed/field-level changes for the editor record source plus a separate candidate-evidence diff, versus `--baseline` or the previous output
 - `publication.json` — deterministic ownership metadata and hashes for the complete generated publication
 
 The optional, separately generated `.local/save-evidence.json` is not part of
@@ -150,12 +157,12 @@ diff generation only; it does not change which current publication is archived.
 Two clean runs against the same sources and baseline produce byte-identical
 current files. Local archive naming and history never enter those files.
 
-The classification rules live in [`config/categories.json`](config/categories.json). Reviewed promotions and suppressions live in [`overrides/catalogue.json`](overrides/catalogue.json); every operation requires a reason, and conflicting operations fail the run.
+The classification rules live in [`config/categories.json`](config/categories.json). They identify the broad evidence superset; canonical game membership and relationships determine editor admission later in the pipeline.
 
-`--strict` turns unresolved, partial, or identity-only evidence and
-incomplete/unverified archive coverage into errors. It audits the broader
-evidence publication as well as the planner; `planner-catalogue.json` itself is
-always built and validated fail-closed.
+`--strict` turns incomplete or unverified evidence coverage into errors. It
+audits the broader evidence publication as well as the planner. Whenever
+semantic extraction is enabled, `planner-catalogue.json` is built and validated
+fail-closed; an index-only `--no-semantic-assets` run intentionally omits it.
 
 ## Editor-facing catalogue contract
 
@@ -456,8 +463,7 @@ The current asset is `/Game/Blueprints/Venus_Weapons/Attachments/Magazines/Magaz
 
 The current Store/Collection data lists Priming Chamber directly as Magazines
 entry 89, marked non-purchasable. That canonical membership admits it to
-`planner-catalogue.json` despite its presently unobtainable state; the reviewed
-override supplies evidence but does not bypass the editor boundary. If a later
+`planner-catalogue.json` despite its presently unobtainable state. If a later
 build removes the authored Collection entry, a clean extraction removes it from
 the editor catalogue unless another canonical player-facing source admits it.
 

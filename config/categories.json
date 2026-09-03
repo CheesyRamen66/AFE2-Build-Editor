@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "relevantRoots": [
+    "/Game/Blueprints/Avocado_Classes/",
+    "/Game/Blueprints/Avocado_Consumables/",
+    "/Game/Blueprints/Venus_Weapons/"
+  ],
+  "rules": [
+    {
+      "id": "kit-unlock-package",
+      "kind": "kit",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Avocado_Classes/ClassUnlocks/KitUnlock_[^/]+$"
+      ]
+    },
+    {
+      "id": "class-perk-board-package",
+      "kind": "gridShape",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Avocado_Classes/[^/]+/Perks/PerkBoard_[^/]+$"
+      ]
+    },
+    {
+      "id": "gameplay-ability-package",
+      "kind": "ability",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Avocado_Classes/[^/]+/Perks/(?:[^/]+/)*GA_[^/]+$"
+      ]
+    },
+    {
+      "id": "class-perk-package",
+      "kind": "perk",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Avocado_Classes/[^/]+/Perks/(?:[^/]+/)*Perk_(?!Board)[^/]+$"
+      ],
+      "exclude": [
+        "/PerksOld/",
+        "/Archive/"
+      ]
+    },
+    {
+      "id": "legacy-class-perk-package",
+      "kind": "perk",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Avocado_Classes/[^/]+/Perks/PerksOld/(?:[^/]+/)*Perk_(?!Board)[^/]+$"
+      ]
+    },
+    {
+      "id": "generic-class-perk-package",
+      "kind": "perk",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Avocado_Classes/Perks/(?:Core|Modifiers|WeaponMastery)/(?:[^/]+/)*Perk_(?!Board)[^/]+$",
+        "^/Game/Blueprints/Avocado_Classes/Perks/Perk_(?!Board)[^/]+$"
+      ],
+      "exclude": [
+        "/Archive/"
+      ]
+    },
+    {
+      "id": "avocado-inventory-item-package",
+      "kind": "item",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Avocado_Consumables/(?:[^/]+/)*Inventory_Avo_[^/]+$"
+      ]
+    },
+    {
+      "id": "player-weapon-package",
+      "kind": "weapon",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Venus_Weapons/Guns/(?:[^/]+/)*Venus_[^/]+$"
+      ],
+      "exclude": [
+        "/Animation/",
+        "/Anims/",
+        "/CompanionVariants/",
+        "/Debug/",
+        "_Ability_",
+        "_Underbarrel_",
+        "_PR(?:_|$)"
+      ]
+    },
+    {
+      "id": "weapon-attachment-package",
+      "kind": "mod",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Venus_Weapons/Attachments/(?:Armatures|Barrels|Magazines|Muzzles|Optics|Underbarrel)/(?:[^/]+/)*Avo_(?!Base)[^/]+$"
+      ]
+    },
+    {
+      "id": "weapon-overclock-package",
+      "kind": "augment",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Venus_Weapons/Attachments/Overclocks/(?:[^/]+/)*Avo_(?!Base)[^/]+$"
+      ],
+      "exclude": [
+        "/Avo_Overclock_Info$"
+      ]
+    },
+    {
+      "id": "weapon-mastery-package",
+      "kind": "trait",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Venus_Weapons/Perks/Mastery/Avo_GunPerk_(?!Base)[^/]+$"
+      ]
+    },
+    {
+      "id": "weapon-stat-perk-chip-package",
+      "kind": "perk",
+      "confidence": "path-heuristic",
+      "include": [
+        "^/Game/Blueprints/Venus_Weapons/Perks/Perkboard/Avo_Perk_[^/]+$"
+      ]
+    }
+  ]
+}

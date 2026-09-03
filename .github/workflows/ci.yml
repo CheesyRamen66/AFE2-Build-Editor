@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Reject tracked local or key material
+        run: |
+          python - <<'PY'
+          import subprocess
+          import re
+          from pathlib import PurePosixPath
+
+          paths = subprocess.check_output(
+              ["git", "ls-files", "-z"], text=True
+          ).split("\0")
+          forbidden = []
+          game_extensions = {
+              ".pak", ".utoc", ".ucas", ".uasset", ".uexp", ".ubulk",
+              ".locres", ".wem", ".bnk", ".exe",
+          }
+          for value in filter(None, paths):
+              path = PurePosixPath(value)
+              if (
+                  ".local" in path.parts
+                  or path.name.casefold() in {"aes.txt", "assetregistry.bin", "pakstore.json"}
+                  or path.suffix.casefold() in game_extensions | {".key"}
+              ):
+                  forbidden.append(value)
+          if forbidden:
+              raise SystemExit("forbidden tracked material: " + ", ".join(forbidden))
+
+          key_like = re.compile(rb"(?<![0-9A-Za-z])[0-9A-Fa-f]{64}(?![0-9A-Za-z])")
+          suspicious = []
+          for value in filter(None, paths):
+              data = open(value, "rb").read()
+              if b"\0" not in data[:8192] and key_like.search(data):
+                  suspicious.append(value)
+          if suspicious:
+              raise SystemExit("review key-like 256-bit hex in: " + ", ".join(suspicious))
+          PY
+      - name: Compile
+        run: python -m compileall -q src scripts
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: CLI smoke
+        run: python scripts/build_catalogue.py --help >/dev/null

@@ -1,0 +1,34 @@
+# Local game-derived output and scratch tools
+.local/
+.tools/
+tools/**/bin/
+tools/**/obj/
+pakstore.json
+AssetRegistry.bin
+*.pak
+*.utoc
+*.ucas
+*.uasset
+*.uexp
+*.ubulk
+*.locres
+*.wem
+*.bnk
+*.exe
+
+# Secret material must never enter the repository
+aes.txt
+AES.txt
+*.key
+AI/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.coverage
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+*.egg-info/

@@ -855,7 +855,7 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_save.add_argument(
         "save",
         type=_path,
-        help="decoded AFE2 character JSON (for example char.dec or char.json)",
+        help="decoded AFE2 character JSON (for example char.json)",
     )
     inspect_save.add_argument(
         "--catalogue-dir",

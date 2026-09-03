@@ -25,6 +25,10 @@ AES.txt
 !.env.example
 AI/
 
+# Common character-save filenames if copied into the repository root
+/char.sav
+/char.json
+
 # Python
 __pycache__/
 *.py[cod]

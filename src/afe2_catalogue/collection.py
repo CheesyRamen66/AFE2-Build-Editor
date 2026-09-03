@@ -33,7 +33,7 @@ PLANNER_CATEGORY_KINDS: dict[str, str] = {
 }
 
 # These are present in the same authored store but are deliberately outside the
-# build planner.  Keeping the ignore set explicit lets validation distinguish a
+# build editor.  Keeping the ignore set explicit lets validation distinguish a
 # known non-build tab from a newly introduced category that needs review.
 IGNORED_COLLECTION_CATEGORIES = frozenset({"Challenge Cards", "Divider"})
 

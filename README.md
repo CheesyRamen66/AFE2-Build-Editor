@@ -1,8 +1,8 @@
-# AFE2 Build Planner — catalogue extractor
+# AFE2 Build Editor — catalogue extractor
 
-This repository currently contains the read-only catalogue-extraction foundation for an **Aliens: Fireteam Elite 2** build planner. The planner UI and build save/load work are intentionally deferred.
+This repository currently contains the read-only catalogue-extraction foundation for an **Aliens: Fireteam Elite 2** build editor. The editor UI and build save/load work are intentionally deferred.
 
-The extractor discovers the Steam installation, indexes the game archives, classifies likely build-planner records, converts selected UE4.27 packages, reads serialized properties and effect definitions, exports PNG icons, validates the result, and reports catalogue changes between game updates. It never modifies the game installation.
+The extractor discovers the Steam installation, indexes the game archives, classifies likely build-editor records, converts selected UE4.27 packages, reads serialized properties and effect definitions, exports PNG icons, validates the result, and reports catalogue changes between game updates. It never modifies the game installation.
 
 ## Start here
 
@@ -77,12 +77,14 @@ internal Rayon parallelism. Output is independent of the selected job count.
 
 ## Inspect a partial character save
 
-A readable `char.dec` can add positive, per-asset evidence without becoming the
-canonical catalogue or a completeness check:
+A decoded `char.json` can add positive, per-asset evidence without
+becoming the canonical catalogue or a completeness check. The
+[runbook](RUNBOOK.md#locate-decode-and-inspect-a-character-save) explains where
+`char.sav` lives and gives the verified XOR decode/round-trip commands.
 
 ```bash
 python3 scripts/build_catalogue.py inspect-save \
-  "/path/to/AFE2/Saved/SaveGames/<profile>/char.dec" \
+  .local/char.json \
   --catalogue-dir .local/catalogue \
   --output .local/save-evidence.json
 ```

@@ -14,14 +14,17 @@ toolchain with zlib development files, and .NET 9.
 If you have not cloned the repository yet:
 
 ```bash
-git clone https://github.com/CheesyRamen66/AFE2-Build-Planner.git
-cd AFE2-Build-Planner
+git clone https://github.com/CheesyRamen66/AFE2-Build-Editor.git
+cd AFE2-Build-Editor
 ```
+
+The repository's current default branch is `dev`; a normal clone selects it
+automatically.
 
 If you already have it, open a terminal in the repository:
 
 ```bash
-cd /path/to/AFE2-Build-Planner
+cd /path/to/AFE2-Build-Editor
 ```
 
 Run the setup check once:
@@ -168,16 +171,49 @@ jq '{
 }' .local/catalogue/changes.json
 ```
 
-## Inspect a readable character save
+## Locate, decode, and inspect a character save
 
 This is optional and is not needed to build the catalogue. It records assets
 observed in one save without changing what the editor may offer.
 
-Pass an already decoded, readable `char.dec` or `char.json`:
+The Windows location is:
+
+```text
+%LOCALAPPDATA%\AFE2\Saved\SaveGames\<SteamID64>\char.sav
+```
+
+Under Linux/Proton, the same location is normally:
+
+```text
+<Steam-library>/steamapps/compatdata/3448650/pfx/drive_c/users/steamuser/AppData/Local/AFE2/Saved/SaveGames/<SteamID64>/char.sav
+```
+
+The numeric `<SteamID64>` directory is account-specific. Replace the
+placeholder below with the directory that contains your `char.sav`:
 
 ```bash
-python3 scripts/build_catalogue.py inspect-save \
-  "/full/path/to/char.json"
+afe2_save_dir="/full/path/to/SaveGames/<SteamID64>"
+test -f "$afe2_save_dir/char.sav"
+mkdir -p .local
+```
+
+AFE2 applies XOR `0x42` to the save. Decode it into the repository's ignored
+`.local/` directory with the following command. It deliberately leaves the
+save's final `}` byte unchanged so the result is valid JSON:
+
+```bash
+python3 -c 'import sys; d=sys.stdin.buffer.read(); assert d.endswith(b"}"), "unexpected save format"; sys.stdout.buffer.write(bytes(b ^ 0x42 for b in d[:-1]) + d[-1:])' \
+  < "$afe2_save_dir/char.sav" \
+  > .local/char.json
+
+python3 -m json.tool .local/char.json > /dev/null
+chmod 600 .local/char.json
+```
+
+Now inspect the decoded file:
+
+```bash
+python3 scripts/build_catalogue.py inspect-save .local/char.json
 ```
 
 It reads the save without modifying it and writes:
@@ -186,8 +222,66 @@ It reads the save without modifying it and writes:
 .local/save-evidence.json
 ```
 
-Do not pass the original encoded `char.sav`; this command is not a save
-decoder.
+`inspect-save` never modifies either file. Do not pass the encoded `char.sav`
+directly; decoding and save inspection are separate steps.
+
+Before editing anything, prove that your decoded file converts back to the
+original save:
+
+```bash
+python3 -c 'import sys; d=sys.stdin.buffer.read(); assert d.endswith(b"}"), "unexpected decoded save format"; sys.stdout.buffer.write(bytes(b ^ 0x42 for b in d[:-1]) + d[-1:])' \
+  < .local/char.json \
+  > .local/char.roundtrip.sav
+
+cmp -- "$afe2_save_dir/char.sav" .local/char.roundtrip.sav
+```
+
+No output from `cmp` means the files are byte-for-byte identical.
+
+The shorter command that XORs every byte is also reversible, but its decoded
+output ends in a literal `?` because AFE2 stores the save's final `}` unencoded.
+`inspect-save` accepts that observed form, but ordinary JSON tools do not. Do
+not mix the whole-file command with the final-`}`-preserving commands above.
+
+### Write an edited save back
+
+This is separate from catalogue extraction; the extractor itself never writes
+to a save. Let Steam Cloud finish syncing, then fully exit AFE2 and Steam.
+Make a backup outside the game's save directory every time:
+
+```bash
+mkdir -p .local/save-backups
+afe2_backup=".local/save-backups/char-$(date +%Y%m%d-%H%M%S-%N).sav"
+cp -- "$afe2_save_dir/char.sav" "$afe2_backup"
+cmp -- "$afe2_save_dir/char.sav" "$afe2_backup"
+```
+
+First validate the edited JSON and remove only trailing whitespace that an
+editor may have added. Then encode a staged save and decode it again to verify
+the result. Do not redirect output directly over the live `char.sav`:
+
+```bash
+python3 -c 'import json, sys; d=sys.stdin.buffer.read().rstrip(b" \t\r\n"); doc=json.loads(d); assert isinstance(doc, dict) and doc.get("_Type") == "CharacterDoc", "expected CharacterDoc JSON"; sys.stdout.buffer.write(d)' \
+  < .local/char.json \
+  > .local/char.ready.json
+
+python3 -c 'import sys; d=sys.stdin.buffer.read(); assert d.endswith(b"}"), "JSON must end with }"; sys.stdout.buffer.write(bytes(b ^ 0x42 for b in d[:-1]) + d[-1:])' \
+  < .local/char.ready.json \
+  > "$afe2_save_dir/char.sav.new"
+
+python3 -c 'import sys; d=sys.stdin.buffer.read(); assert d.endswith(b"}"), "unexpected encoded save format"; sys.stdout.buffer.write(bytes(b ^ 0x42 for b in d[:-1]) + d[-1:])' \
+  < "$afe2_save_dir/char.sav.new" \
+  > .local/char.verify.json
+
+cmp -- .local/char.ready.json .local/char.verify.json &&
+chmod --reference="$afe2_save_dir/char.sav" "$afe2_save_dir/char.sav.new" &&
+mv -- "$afe2_save_dir/char.sav.new" "$afe2_save_dir/char.sav"
+```
+
+The live save is replaced only if `cmp` confirms an exact decoded round trip.
+Keep the backup until the edited save has loaded correctly in game. Steam Cloud
+may ask which copy to keep after an out-of-game edit; check its timestamps and
+do not let it silently restore the older cloud copy.
 
 When using non-default paths:
 
@@ -201,7 +295,8 @@ python3 scripts/build_catalogue.py inspect-save \
 Choose a dedicated report filename: `--output` atomically replaces that file on
 later runs. Although the report is identity-stripped, it still describes a
 player's inventory, loadouts, and progress and should be reviewed before it is
-shared.
+shared. Treat the original save, decoded JSON, and SteamID64 as private; do not
+attach them to a public issue.
 
 ## If the game is not found
 
@@ -231,10 +326,10 @@ it can briefly be visible to other processes owned by the same local OS user.
 As a fallback, store the key outside the repository in a private file:
 
 ```bash
-install -d -m 700 "$HOME/.config/afe2-build-planner"
-touch "$HOME/.config/afe2-build-planner/aes.key"
-chmod 600 "$HOME/.config/afe2-build-planner/aes.key"
-nano "$HOME/.config/afe2-build-planner/aes.key"
+install -d -m 700 "$HOME/.config/afe2-build-editor"
+touch "$HOME/.config/afe2-build-editor/aes.key"
+chmod 600 "$HOME/.config/afe2-build-editor/aes.key"
+nano "$HOME/.config/afe2-build-editor/aes.key"
 ```
 
 If `nano` is not installed, open that same file with your usual text editor.
@@ -245,11 +340,11 @@ Then use it for both commands:
 
 ```bash
 python3 scripts/build_catalogue.py doctor \
-  --key-file "$HOME/.config/afe2-build-planner/aes.key" \
+  --key-file "$HOME/.config/afe2-build-editor/aes.key" \
   --no-executable-key-scan
 
 python3 scripts/build_catalogue.py extract \
-  --key-file "$HOME/.config/afe2-build-planner/aes.key" \
+  --key-file "$HOME/.config/afe2-build-editor/aes.key" \
   --no-executable-key-scan
 ```
 

@@ -160,7 +160,7 @@ class SaveLoadingTests(unittest.TestCase):
     def test_loads_ordinary_json_without_normalization(self) -> None:
         document = {"_Type": "CharacterDoc", "Value": 1}
         with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "char.dec"
+            path = Path(temporary) / "char.json"
             path.write_text(json.dumps(document), encoding="utf-8")
 
             loaded, normalization = load_character_save(path)
@@ -173,7 +173,7 @@ class SaveLoadingTests(unittest.TestCase):
         encoded = json.dumps(document).encode("utf-8")
         encoded = encoded[:-1] + b"?"
         with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "char.dec"
+            path = Path(temporary) / "char.json"
             path.write_bytes(encoded)
 
             loaded, normalization = load_character_save(path)
@@ -184,7 +184,7 @@ class SaveLoadingTests(unittest.TestCase):
 
     def test_rejects_invalid_json_and_non_character_documents(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "char.dec"
+            path = Path(temporary) / "char.json"
             path.write_text('{"_Type":"CharacterDoc","bad":?}', encoding="utf-8")
             with self.assertRaisesRegex(CatalogueError, "not readable"):
                 load_character_save(path)
@@ -369,7 +369,7 @@ class SaveEvidenceCliTests(unittest.TestCase):
                 ("planner-catalogue.json", planner_catalogue),
             ):
                 (catalogue_root / filename).write_text(json.dumps(document), encoding="utf-8")
-            save_path = root / "char.dec"
+            save_path = root / "char.json"
             save_bytes = json.dumps(synthetic_save()).encode("utf-8")
             save_bytes = save_bytes[:-1] + b"?"
             save_path.write_bytes(save_bytes)
@@ -406,7 +406,7 @@ class SaveEvidenceCliTests(unittest.TestCase):
                 ("planner-catalogue.json", planner_catalogue),
             ):
                 (catalogue_root / filename).write_text(json.dumps(document), encoding="utf-8")
-            save_path = root / "char.dec"
+            save_path = root / "char.json"
             save_path.write_text(json.dumps(synthetic_save()), encoding="utf-8")
             output = catalogue_root / "save-evidence.json"
 

@@ -83,7 +83,8 @@ export function BuildEditor({ index }: { index: CatalogueIndex }) {
     browserBuildDraftStore.save(build);
   }, [build]);
 
-  const notify = useCallback((message: string, _tone: "info" | "error" = "info") => {
+  // Deliberately screen-reader only: grid feedback is announced, never shown.
+  const notify = useCallback((message: string) => {
     setAnnouncement(message);
   }, []);
   const dispatch = useCallback((action: BuildAction) => baseDispatch(action), []);

@@ -476,7 +476,7 @@ test("Marauder modifiers choose one family and cannot bridge into another", asyn
   await expect(page.locator(`.family-connector[data-family-id="${blastCannonId}"]`))
     .toHaveCount(0);
 
-  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.getByRole("button", { name: "Reset board", exact: true }).click();
   await placeBiggerAndBetter("Blast Cannon");
   await perkSearch.fill("Larger Payload");
   await page.locator(".perk-list-item").filter({
@@ -491,6 +491,46 @@ test("Marauder modifiers choose one family and cannot bridge into another", asyn
     .toHaveCount(1);
   await expect(page.locator(`.family-connector[data-family-id="${titanRocketsId}"]`))
     .toHaveCount(0);
+});
+
+test("every linked modifier carries a connector and every unlinked one is red", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.getByRole("radio", { name: /Marauder/ }).click();
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const perk = page.locator(".perk-list-item").first();
+    if (!(await perk.count())) break;
+    await perk.click();
+    const footprints = page.locator(".perk-cell.is-legal-footprint");
+    if (!(await footprints.count())) {
+      await page.keyboard.press("Escape");
+      continue;
+    }
+    await footprints.nth((attempt * 7) % (await footprints.count())).click();
+    const chooser = page.locator(".modifier-family-dialog");
+    if (await chooser.count()) await chooser.locator(".modifier-family-option").first().click();
+  }
+
+  const wiring = await page.evaluate(() => {
+    const wired = new Set<string>();
+    for (const connector of document.querySelectorAll<HTMLElement>(".family-connector")) {
+      if (connector.dataset.fromNode) wired.add(connector.dataset.fromNode);
+      if (connector.dataset.toNode) wired.add(connector.dataset.toNode);
+    }
+    return [...document.querySelectorAll<HTMLElement>(".placed-perk--modifier")].map((chip) => ({
+      linked: chip.dataset.linkStatus === "linked",
+      connected: wired.has(`perk:${chip.dataset.perkId}`),
+      red: chip.classList.contains("has-issue"),
+    }));
+  });
+
+  expect(wiring.length).toBeGreaterThan(0);
+  for (const chip of wiring) {
+    expect(chip.connected).toBe(chip.linked);
+    expect(chip.red).toBe(!chip.linked);
+  }
 });
 
 test("Specialist ability slots start empty and clear or F returns kit defaults", async ({ page }) => {
@@ -518,7 +558,7 @@ test("Specialist ability slots start empty and clear or F returns kit defaults",
 
   await primary.click();
   await page.locator(".picker-option").first().click();
-  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.getByRole("button", { name: "Reset board", exact: true }).click();
   await expect(primary).toHaveAttribute("aria-label", /ability: empty/);
 
   await page.getByRole("radio", { name: /Marauder/ }).click();

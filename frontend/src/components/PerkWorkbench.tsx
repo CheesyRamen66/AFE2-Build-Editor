@@ -19,6 +19,7 @@ import { createPortal } from "react-dom";
 import { catalogueAssetUrl, plainGameText } from "../data/catalogue";
 import {
   availableModifierFamilyChoices,
+  canRotate,
   gridCellLabel,
   nextRotation,
   occupiedCells,
@@ -50,7 +51,7 @@ interface PerkWorkbenchProps {
   build: BuildState;
   dispatch: (action: BuildAction) => void;
   onChooseAbility: (slot: AbilitySlot) => void;
-  notify: (message: string, tone?: "info" | "error") => void;
+  notify: (message: string) => void;
 }
 
 interface GridMetrics {
@@ -737,6 +738,8 @@ export function PerkWorkbench({
   const [pendingFamilyAssignment, setPendingFamilyAssignment] =
     useState<PendingFamilyAssignment | null>(null);
   const [gridChipTooltip, setGridChipTooltip] = useState<GridChipTooltip | null>(null);
+  const [blockedRotationPerkId, setBlockedRotationPerkId] = useState<string | null>(null);
+  const blockedRotationTimerRef = useRef<number | undefined>(undefined);
   const hoveredGridChipRef = useRef<HoveredGridChip | null>(null);
   const focusedGridChipRef = useRef<HoveredGridChip | null>(null);
   const lastPointerPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -782,7 +785,10 @@ export function PerkWorkbench({
     pendingFamilyFilterIdRef.current = null;
     setPendingFamilyAssignment(null);
     setGridChipTooltip(null);
+    setBlockedRotationPerkId(null);
   }, [kit.id]);
+
+  useEffect(() => () => window.clearTimeout(blockedRotationTimerRef.current), []);
 
   useEffect(() => {
     const refresh = () => refreshGridMetrics();
@@ -1177,13 +1183,13 @@ export function PerkWorkbench({
   const tryPlace = (perkId: string, row: number, column: number, rotation: Rotation): boolean => {
     const perk = index.byId.get(perkId);
     if (!perk || perk.kind !== "perk" || !kitPerkIds.has(perkId)) {
-      notify("That perk is not available to this kit.", "error");
+      notify("That perk is not available to this kit.");
       return false;
     }
     const candidate: PlacedPerk = { perkId, row, column, rotation };
     const result = validatePlacement(index, layout, build.perks, candidate);
     if (!result.valid) {
-      notify(result.reason ?? "That perk cannot be placed there.", "error");
+      notify(result.reason ?? "That perk cannot be placed there.");
       return false;
     }
     return stagePlacement(
@@ -1200,7 +1206,7 @@ export function PerkWorkbench({
     const candidate = { ...current, row, column };
     const result = validatePlacement(index, layout, build.perks, candidate, perkId);
     if (!result.valid) {
-      notify(result.reason ?? "That perk cannot be moved there.", "error");
+      notify(result.reason ?? "That perk cannot be moved there.");
       return false;
     }
     return stagePlacement(
@@ -1212,11 +1218,11 @@ export function PerkWorkbench({
 
   const commitSnappedPlacement = (snapped: SnappedPlacement | undefined) => {
     if (!snapped || !activePerk) {
-      notify("That perk cannot fit on this grid.", "error");
+      notify("That perk cannot fit on this grid.");
       return;
     }
     if (snapped.overlaps) {
-      notify("That placement overlaps another brick.", "error");
+      notify("That placement overlaps another brick.");
       return;
     }
     const { row, column } = snapped.placement;
@@ -1304,7 +1310,7 @@ export function PerkWorkbench({
           )
         : undefined);
       if (snapped?.overlaps) {
-        notify("That placement overlaps another brick.", "error");
+        notify("That placement overlaps another brick.");
         return;
       }
       if (snapped) movePerk(movingId, snapped.placement.row, snapped.placement.column);
@@ -1357,7 +1363,7 @@ export function PerkWorkbench({
         )
       : undefined);
     if (snapped?.overlaps) {
-      notify("That placement overlaps another brick.", "error");
+      notify("That placement overlaps another brick.");
       return;
     }
     if (snapped) tryPlace(perkId, snapped.placement.row, snapped.placement.column, rotation);
@@ -1388,6 +1394,15 @@ export function PerkWorkbench({
     return () => window.removeEventListener("click", dropJustOutside, true);
   });
 
+  const flagBlockedRotation = (perkId: string) => {
+    window.clearTimeout(blockedRotationTimerRef.current);
+    setBlockedRotationPerkId(perkId);
+    blockedRotationTimerRef.current = window.setTimeout(
+      () => setBlockedRotationPerkId(null),
+      450,
+    );
+  };
+
   const rotatePlaced = (perkId: string) => {
     const placement = build.perks.find((candidate) => candidate.perkId === perkId);
     const perk = index.byId.get(perkId);
@@ -1403,7 +1418,9 @@ export function PerkWorkbench({
       placement.perkId,
     );
     if (!result.valid) {
-      notify(result.reason ?? "There is not enough room to rotate this perk.", "error");
+      // Messages are announced, not shown, so mark the chip itself as refused.
+      flagBlockedRotation(perkId);
+      notify(result.reason ?? "There is not enough room to rotate this perk.");
       return;
     }
     if (movingPerkId === perkId || draggingPerkId === perkId) {
@@ -1429,6 +1446,7 @@ export function PerkWorkbench({
   const rotatePending = () => {
     if (!pendingPerk) return;
     const rotation = nextRotation(pendingPerk, pendingRotation);
+    if (rotation === pendingRotation) return;
     const fromShape = rotateShape(pendingPerk.grid.shapes[0], pendingRotation);
     const toShape = rotateShape(pendingPerk.grid.shapes[0], rotation);
     const currentOffset = grabOffsetRef.current ?? centeredGrabOffset(fromShape, gridMetricsRef.current);
@@ -1456,7 +1474,7 @@ export function PerkWorkbench({
       }
     }
     if (!targetId) {
-      notify("That modifier does not have a resolved parent yet.", "error");
+      notify("That modifier does not have a resolved parent yet.");
       return;
     }
     filterBeforeCompatibilityRef.current = filter;
@@ -1685,160 +1703,6 @@ export function PerkWorkbench({
       </div>
 
       <div className="perk-workbench">
-        <aside className="perk-library" aria-label="Perk library" ref={libraryRef}>
-          <div className="perk-library__search-row">
-            <label className="search-field search-field--compact">
-              <Search size={16} aria-hidden="true" />
-              <span className="sr-only">Search {availablePerks.length} perks</span>
-              <input
-                type="search"
-                placeholder={`Search ${availablePerks.length} perks`}
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  if (perkListRef.current) perkListRef.current.scrollTop = 0;
-                }}
-              />
-            </label>
-            {(modifierTargetId || pendingPerk || movingPerk) && (
-              <div className="perk-library__actions perk-library__actions--active">
-                {modifierTargetId && (
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={closeCompatibilityFilter}
-                    aria-label="Show all perks"
-                    title="Show all perks"
-                  >
-                    <X size={17} />
-                  </button>
-                )}
-                {(pendingPerk || movingPerk) && (
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={clearHeldState}
-                    aria-label={movingPerk ? "Cancel perk move" : "Cancel perk placement"}
-                  >
-                    <X size={17} />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="segmented-control" aria-label="Filter perks">
-            {(["all", "core", "modifier"] as const).map((value) => (
-              <button
-                type="button"
-                className={filter === value ? "is-active" : ""}
-                aria-pressed={filter === value}
-                key={value}
-                onClick={() => {
-                  setModifierTargetId(null);
-                  filterBeforeCompatibilityRef.current = value;
-                  setFilter(value);
-                  if (perkListRef.current) perkListRef.current.scrollTop = 0;
-                }}
-              >
-                {value}
-              </button>
-            ))}
-          </div>
-
-          <div
-            className="perk-list"
-            ref={perkListRef}
-            onScroll={() => hideGridChipTooltip()}
-          >
-            {availablePerks.map((perk) => {
-              const pending = pendingPerkId === perk.id;
-              const unfulfilled = unfulfilledPerkIds.has(perk.id);
-              const tooltipKey = `library-perk:${perk.id}`;
-              const tooltipDescription = [
-                plainGameText(perk.description) || "No description available.",
-                unfulfilled ? "Needs a compatible active target." : "",
-              ].filter(Boolean).join("\n");
-              const wellColor = unfulfilled
-                ? "#ff5f57"
-                : perkChipColor(perk, index.kits.length);
-              const wellTone = unfulfilled
-                ? "red"
-                : wellColor === GAME_CHIP_COLORS.kit ? "green" : "blue";
-              return (
-                <button
-                  type="button"
-                  className={`perk-list-item ${pending ? "is-pending" : ""} ${unfulfilled ? "is-unfulfilled" : ""}`}
-                  key={perk.id}
-                  data-card-tone={unfulfilled ? "gray" : "orange"}
-                  data-well-tone={wellTone}
-                  data-dependency-status={unfulfilled ? "unfulfilled" : "ready"}
-                  style={{ "--perk-library-well": wellColor } as CSSProperties}
-                  draggable
-                  onDragStart={(event) => {
-                    hideGridChipTooltip(tooltipKey);
-                    pendingFamilyFilterIdRef.current = modifierTargetId;
-                    const rotation = pendingPerkId === perk.id ? pendingRotation : "Default";
-                    const metrics = refreshGridMetrics();
-                    const shape = rotateShape(perk.grid.shapes[0], rotation);
-                    updateGrabOffset(centeredGrabOffset(shape, metrics));
-                    event.dataTransfer.setData("application/x-afe2-perk", perk.id);
-                    event.dataTransfer.setData("application/x-afe2-rotation", rotation);
-                    event.dataTransfer.effectAllowed = "copy";
-                    setPendingPerkId(perk.id);
-                    setPendingRotation(rotation);
-                    setMovingPerkId(null);
-                    setDraggingPerkId(null);
-                    setPointerPosition(null);
-                  }}
-                  onDragEnd={() => {
-                    setPendingPerkId(null);
-                    setPendingRotation("Default");
-                    setPointerPosition(null);
-                    updateGrabOffset(null);
-                    pendingFamilyFilterIdRef.current = null;
-                  }}
-                  onClick={(event) => choosePerk(perk, event.clientX, event.clientY)}
-                  onMouseEnter={(event) => showGridChipTooltip(
-                    event.currentTarget,
-                    tooltipKey,
-                    perk.displayName,
-                    tooltipDescription,
-                  )}
-                  onMouseLeave={() => hideGridChipTooltip(tooltipKey)}
-                  onFocus={(event) => showGridChipTooltip(
-                    event.currentTarget,
-                    tooltipKey,
-                    perk.displayName,
-                    tooltipDescription,
-                  )}
-                  onBlur={() => hideGridChipTooltip(tooltipKey)}
-                  aria-pressed={pending}
-                  aria-label={`Pick up ${perk.displayName} for placement`}
-                  aria-describedby={gridChipTooltip?.chipKey === tooltipKey
-                    ? "grid-chip-tooltip"
-                    : undefined}
-                >
-                  <RecordVisual record={perk} />
-                  <span className="perk-list-item__copy">
-                    <strong>{perk.displayName}</strong>
-                    <small>{perk.perkType}</small>
-                  </span>
-                  <span className={`perk-state perk-state--${unfulfilled ? "unfulfilled" : perk.perkType}`}>
-                    {unfulfilled ? "TARGET" : footprintLabel(perk)}
-                  </span>
-                </button>
-              );
-            })}
-            {!availablePerks.length && (
-              <div className="empty-state empty-state--small">
-                <Search size={22} />
-                <strong>No matching perks</strong>
-              </div>
-            )}
-          </div>
-        </aside>
-
         <div className="board-panel">
           <div className="board-toolbar">
             <div className="board-status">
@@ -1877,7 +1741,7 @@ export function PerkWorkbench({
               </div>
             )}
             <div className="board-actions">
-              {pendingPerk && (
+              {pendingPerk && canRotate(pendingPerk) && (
                 <button
                   type="button"
                   className="button button--tool"
@@ -1903,8 +1767,9 @@ export function PerkWorkbench({
                   hideGridChipTooltip();
                   notify("Perk grid and abilities reset.");
                 }}
+                title="Remove every placed perk and return all three ability slots to this kit's defaults."
               >
-                Clear
+                Reset board
               </button>
             </div>
           </div>
@@ -2067,6 +1932,18 @@ export function PerkWorkbench({
                 const isDragging = draggingPerkId === perk.id;
                 const bodyPath = chipBodyPath(perk, placement.rotation);
                 const chipKey = `perk:${perk.id}`;
+                // Connectors show that a chip is wired to something, not which
+                // ability it feeds, so name the family the run terminates at.
+                const family = placement.targetFamilyId
+                  ? index.byId.get(placement.targetFamilyId)
+                  : undefined;
+                const attachment = !hasIssue && family && family.id !== perk.id
+                  ? `Attached to ${family.displayName}.`
+                  : "";
+                const chipDescription = [
+                  plainGameText(perk.description) || "No description available.",
+                  attachment,
+                ].filter(Boolean).join("\n");
                 return (
                   <button
                     type="button"
@@ -2080,6 +1957,7 @@ export function PerkWorkbench({
                     aria-keyshortcuts="D R F"
                     data-perk-id={perk.id}
                     data-link-status={hasIssue ? "unlinked" : "linked"}
+                    data-rotation-blocked={blockedRotationPerkId === perk.id ? "true" : undefined}
                     onDragStart={(event) => {
                       hideGridChipTooltip(chipKey);
                       pendingFamilyFilterIdRef.current = null;
@@ -2130,7 +2008,7 @@ export function PerkWorkbench({
                         event.currentTarget,
                         chipKey,
                         perk.displayName,
-                        perk.description ?? "No description available.",
+                        chipDescription,
                       );
                     }}
                     onMouseLeave={() => {
@@ -2143,7 +2021,7 @@ export function PerkWorkbench({
                         event.currentTarget,
                         chipKey,
                         perk.displayName,
-                        perk.description ?? "No description available.",
+                        chipDescription,
                       );
                     }}
                     onBlur={() => {
@@ -2170,7 +2048,7 @@ export function PerkWorkbench({
                       notify(`${perk.displayName} picked up. Choose a highlighted grid cell.`);
                     }}
                     key={perk.id}
-                    aria-label={`${perk.displayName}, ${footprintLabel(perk, placement.rotation)}, at ${gridCellLabel(placement)}${hasIssue ? ", connection required" : ""}`}
+                    aria-label={`${perk.displayName}, ${footprintLabel(perk, placement.rotation)}, at ${gridCellLabel(placement)}${hasIssue ? ", connection required" : ""}${attachment ? `, attached to ${family?.displayName}` : ""}`}
                     aria-describedby={gridChipTooltip?.chipKey === chipKey ? "grid-chip-tooltip" : undefined}
                   >
                     <RecordVisual record={perk} />
@@ -2182,6 +2060,159 @@ export function PerkWorkbench({
           </div>
 
         </div>
+        <aside className="perk-library" aria-label="Perk library" ref={libraryRef}>
+          <div className="perk-library__search-row">
+            <label className="search-field search-field--compact">
+              <Search size={16} aria-hidden="true" />
+              <span className="sr-only">Search {availablePerks.length} perks</span>
+              <input
+                type="search"
+                placeholder={`Search ${availablePerks.length} perks`}
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  if (perkListRef.current) perkListRef.current.scrollTop = 0;
+                }}
+              />
+            </label>
+            {(modifierTargetId || pendingPerk || movingPerk) && (
+              <div className="perk-library__actions perk-library__actions--active">
+                {modifierTargetId && (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={closeCompatibilityFilter}
+                    aria-label="Show all perks"
+                    title="Show all perks"
+                  >
+                    <X size={17} />
+                  </button>
+                )}
+                {(pendingPerk || movingPerk) && (
+                  <button
+                    type="button"
+                    className="icon-button"
+                    onClick={clearHeldState}
+                    aria-label={movingPerk ? "Cancel perk move" : "Cancel perk placement"}
+                  >
+                    <X size={17} />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="segmented-control" aria-label="Filter perks">
+            {(["all", "core", "modifier"] as const).map((value) => (
+              <button
+                type="button"
+                className={filter === value ? "is-active" : ""}
+                aria-pressed={filter === value}
+                key={value}
+                onClick={() => {
+                  setModifierTargetId(null);
+                  filterBeforeCompatibilityRef.current = value;
+                  setFilter(value);
+                  if (perkListRef.current) perkListRef.current.scrollTop = 0;
+                }}
+              >
+                {value}
+              </button>
+            ))}
+          </div>
+
+          <div
+            className="perk-list"
+            ref={perkListRef}
+            onScroll={() => hideGridChipTooltip()}
+          >
+            {availablePerks.map((perk) => {
+              const pending = pendingPerkId === perk.id;
+              const unfulfilled = unfulfilledPerkIds.has(perk.id);
+              const tooltipKey = `library-perk:${perk.id}`;
+              const tooltipDescription = [
+                plainGameText(perk.description) || "No description available.",
+                unfulfilled ? "Needs a compatible active target." : "",
+              ].filter(Boolean).join("\n");
+              const wellColor = unfulfilled
+                ? "#ff5f57"
+                : perkChipColor(perk, index.kits.length);
+              const wellTone = unfulfilled
+                ? "red"
+                : wellColor === GAME_CHIP_COLORS.kit ? "green" : "blue";
+              return (
+                <button
+                  type="button"
+                  className={`perk-list-item ${pending ? "is-pending" : ""} ${unfulfilled ? "is-unfulfilled" : ""}`}
+                  key={perk.id}
+                  data-card-tone={unfulfilled ? "gray" : "orange"}
+                  data-well-tone={wellTone}
+                  data-dependency-status={unfulfilled ? "unfulfilled" : "ready"}
+                  style={{ "--perk-library-well": wellColor } as CSSProperties}
+                  draggable
+                  onDragStart={(event) => {
+                    hideGridChipTooltip(tooltipKey);
+                    pendingFamilyFilterIdRef.current = modifierTargetId;
+                    const rotation = pendingPerkId === perk.id ? pendingRotation : "Default";
+                    const metrics = refreshGridMetrics();
+                    const shape = rotateShape(perk.grid.shapes[0], rotation);
+                    updateGrabOffset(centeredGrabOffset(shape, metrics));
+                    event.dataTransfer.setData("application/x-afe2-perk", perk.id);
+                    event.dataTransfer.setData("application/x-afe2-rotation", rotation);
+                    event.dataTransfer.effectAllowed = "copy";
+                    setPendingPerkId(perk.id);
+                    setPendingRotation(rotation);
+                    setMovingPerkId(null);
+                    setDraggingPerkId(null);
+                    setPointerPosition(null);
+                  }}
+                  onDragEnd={() => {
+                    setPendingPerkId(null);
+                    setPendingRotation("Default");
+                    setPointerPosition(null);
+                    updateGrabOffset(null);
+                    pendingFamilyFilterIdRef.current = null;
+                  }}
+                  onClick={(event) => choosePerk(perk, event.clientX, event.clientY)}
+                  onMouseEnter={(event) => showGridChipTooltip(
+                    event.currentTarget,
+                    tooltipKey,
+                    perk.displayName,
+                    tooltipDescription,
+                  )}
+                  onMouseLeave={() => hideGridChipTooltip(tooltipKey)}
+                  onFocus={(event) => showGridChipTooltip(
+                    event.currentTarget,
+                    tooltipKey,
+                    perk.displayName,
+                    tooltipDescription,
+                  )}
+                  onBlur={() => hideGridChipTooltip(tooltipKey)}
+                  aria-pressed={pending}
+                  aria-label={`Pick up ${perk.displayName} for placement`}
+                  aria-describedby={gridChipTooltip?.chipKey === tooltipKey
+                    ? "grid-chip-tooltip"
+                    : undefined}
+                >
+                  <RecordVisual record={perk} />
+                  <span className="perk-list-item__copy">
+                    <strong>{perk.displayName}</strong>
+                    <small>{perk.perkType}</small>
+                  </span>
+                  <span className={`perk-state perk-state--${unfulfilled ? "unfulfilled" : perk.perkType}`}>
+                    {unfulfilled ? "TARGET" : footprintLabel(perk)}
+                  </span>
+                </button>
+              );
+            })}
+            {!availablePerks.length && (
+              <div className="empty-state empty-state--small">
+                <Search size={22} />
+                <strong>No matching perks</strong>
+              </div>
+            )}
+          </div>
+        </aside>
       </div>
 
       {cursorPerk && cursorRotation && cursorShape && pointerPosition && (

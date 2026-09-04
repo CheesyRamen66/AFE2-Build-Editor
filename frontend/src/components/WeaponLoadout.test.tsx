@@ -26,8 +26,8 @@ function threeSlotFixture() {
 
   weapon.description = "A reliable rifle for synthetic missions.";
   trait.description = (
-    "Improves handling while firing.\r\n\r\n"
-    + "+20.0% Handling\r\n\r\n"
+    "Improves handling while firing.\r\n"
+    + "+20.0% Handling\r\n"
     + "<Bold>On Hit</>:\r\n"
     + "  +10% Accuracy"
   );
@@ -166,8 +166,8 @@ describe("WeaponLoadout", () => {
     tooltip = screen.getByRole("tooltip");
     expect([...tooltip.children].map((child) => child.textContent)).toEqual([
       "Alpha Trait",
-      "Improves handling while firing.\n\n"
-        + "+20.0% Handling\n\n"
+      "Improves handling while firing.\n"
+        + "+20.0% Handling\n"
         + "On Hit:\n"
         + "  +10% Accuracy",
     ]);

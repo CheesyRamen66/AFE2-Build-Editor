@@ -64,8 +64,8 @@ class PlannerCatalogueTests(unittest.TestCase):
         self.assertEqual(
             description,
             (
-                "Explosives detonate on impact.\r\n\r\n"
-                "+10.0% Magazine Capacity\r\n\r\n"
+                "Explosives detonate on impact.\r\n"
+                "+10.0% Magazine Capacity\r\n"
                 "+150 Explosion Radius"
             ),
         )
@@ -760,7 +760,7 @@ class PlannerCatalogueTests(unittest.TestCase):
         self.assertEqual(
             augment["description"],
             (
-                "Rifle-specific payload flavor text.\r\n\r\n"
+                "Rifle-specific payload flavor text.\r\n"
                 "Rifle-specific payload summary."
             ),
         )
@@ -827,7 +827,7 @@ class PlannerCatalogueTests(unittest.TestCase):
         self.assertEqual(
             records["mod:magazine"]["description"],
             (
-                "+20.0% Reload Speed\r\n\r\n"
+                "+20.0% Reload Speed\r\n"
                 "<Bold>On Reload</>:\r\n  +10% Reload Speed"
             ),
         )
@@ -858,7 +858,7 @@ class PlannerCatalogueTests(unittest.TestCase):
                     "descriptionSecondary",
                     "descriptionUpper",
                 ],
-                "sectionSeparator": "\r\n\r\n",
+                "sectionSeparator": "\r\n",
                 "staticStatField": "staticStatLines",
             },
         )
@@ -875,7 +875,7 @@ class PlannerCatalogueTests(unittest.TestCase):
                     "staticStatLines",
                     "conditionalDescriptions",
                 ],
-                "sectionSeparator": "\r\n\r\n",
+                "sectionSeparator": "\r\n",
                 "staticStatField": "staticStatLines",
             },
         )

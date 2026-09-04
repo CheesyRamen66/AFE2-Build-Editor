@@ -5,6 +5,7 @@ import {
   attachmentSlotKey,
   availableModifierFamilyChoices,
   availableModifierTargetIds,
+  canRotate,
   createBuildForKit,
   hydrateLocalBuild,
   nextRotation,
@@ -105,6 +106,40 @@ describe("build model", () => {
 
       expect(nextRotation(perk, "Default")).toBe("Clockwise90");
       expect(nextRotation(perk, "Clockwise270")).toBe("Default");
+    });
+
+    it("skips a rotation that would leave the footprint unchanged", () => {
+      // A 2x1 rectangle serializes four rotations but only two footprints, so
+      // every step has to land on the opposite orientation.
+      const perk = index.byId.get("perk-bar") as PerkRecord;
+
+      expect(canRotate(perk)).toBe(true);
+      for (const rotation of perk.grid.allowedRotations) {
+        const next = nextRotation(perk, rotation);
+        expect(rotateShape(perk.grid.shapes[0], next).width)
+          .not.toBe(rotateShape(perk.grid.shapes[0], rotation).width);
+      }
+    });
+
+    it("reports a square footprint as unrotatable instead of turning it silently", () => {
+      const perk = index.byId.get("perk-bar") as PerkRecord;
+      perk.grid.shapes = [{
+        width: 2,
+        height: 2,
+        cellCount: 4,
+        size: "2x2",
+        occupiedCells: [
+          { row: 0, column: 0 },
+          { row: 0, column: 1 },
+          { row: 1, column: 0 },
+          { row: 1, column: 1 },
+        ],
+      }];
+
+      expect(canRotate(perk)).toBe(false);
+      for (const rotation of perk.grid.allowedRotations) {
+        expect(nextRotation(perk, rotation)).toBe(rotation);
+      }
     });
   });
 

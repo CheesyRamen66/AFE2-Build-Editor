@@ -1003,7 +1003,15 @@ def _grid_contract(
             "rowOrigin": 0,
         },
         "kitLayouts": layouts,
+        # Hand-authored editor policy, not serialized evidence. No package
+        # states these rules, so they carry a status marker rather than sitting
+        # unlabelled beside extracted fields and reading as proven.
         "placementRules": {
+            "status": "authored-editor-policy",
+            "reason": (
+                "placement and connection behaviour is authored from observed play, not "
+                "recovered from the packages; correct it here when the board disagrees"
+            ),
             "core": {"mayOccupyAnyPlaceableCells": True},
             "modifier": {
                 "adjacency": "orthogonal-only",
@@ -1016,8 +1024,10 @@ def _grid_contract(
                 "connectionRule": (
                     "every modifier selects one dependency-compatible target; following "
                     "modifier targets recursively must be acyclic and terminate at a core "
-                    "perk, passive, or ability, and the orthogonally connected component "
-                    "must contain that terminal target"
+                    "perk, passive, or ability; a modifier joins that family only by "
+                    "orthogonally touching a chip already in it, so each family is one "
+                    "connected run of its own chips and chips of other families do not "
+                    "conduct"
                 ),
                 "diagonalAdjacencyCounts": False,
                 "selectedTargetField": "targetId",

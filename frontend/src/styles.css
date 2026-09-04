@@ -907,7 +907,7 @@ select:focus-visible {
 }
 
 .perk-board {
-  --cell-size: clamp(47px, calc((100vw - 720px) / 10), 72px);
+  --cell-size: clamp(47px, calc((100vw - 720px) / var(--board-columns, 10)), 72px);
   --cell-gap: 6px;
   --board-padding: 13px;
   position: relative;
@@ -990,11 +990,6 @@ select:focus-visible {
   background: rgba(226, 233, 232, 0.14);
   box-shadow: 0 0 12px rgba(226, 233, 232, 0.1);
   transform: none;
-}
-
-.perk-cell.is-invalid-target {
-  opacity: 0.28;
-  cursor: not-allowed;
 }
 
 .perk-cell.is-occupied {
@@ -1157,6 +1152,23 @@ select:focus-visible {
 .placed-perk.has-issue {
   --chip-color: #ff5f57 !important;
   filter: brightness(1.04) drop-shadow(0 0 7px rgba(255, 95, 87, 0.82));
+}
+
+/*
+ * Placement feedback is announced to screen readers only, so a rotation the
+ * board refuses has to show on the chip itself. The outline carries the signal
+ * on its own when reduced motion neutralises the nudge.
+ */
+@keyframes perk-rotation-refused {
+  0%, 100% { translate: 0 0; }
+  30% { translate: -3px 0; }
+  70% { translate: 3px 0; }
+}
+
+.placed-perk[data-rotation-blocked="true"] {
+  outline: 2px solid var(--danger);
+  outline-offset: -3px;
+  animation: perk-rotation-refused 220ms ease-in-out;
 }
 
 .placed-perk .record-visual {

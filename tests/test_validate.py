@@ -421,9 +421,7 @@ def valid_planner_arguments() -> dict[str, object]:
             "collectionCategory": "AugmentPacks",
             "collectionConceptId": augment_id,
             "compatibleWeaponIds": [weapon_id],
-            "description": (
-                "Augment effect\r\n\r\nAugment flavor\r\n\r\nAugment summary"
-            ),
+            "description": "Augment effect\r\nAugment flavor\r\nAugment summary",
             "descriptionPanel": {
                 "description": "Augment effect",
                 "descriptionSecondary": "Augment flavor",
@@ -636,7 +634,7 @@ def valid_planner_arguments() -> dict[str, object]:
                     "staticStatLines",
                     "conditionalDescriptions",
                 ],
-                "sectionSeparator": "\r\n\r\n",
+                "sectionSeparator": "\r\n",
                 "staticStatField": "staticStatLines",
             },
             "augmentDescriptionComposition": {
@@ -655,7 +653,7 @@ def valid_planner_arguments() -> dict[str, object]:
                     "descriptionSecondary",
                     "descriptionUpper",
                 ],
-                "sectionSeparator": "\r\n\r\n",
+                "sectionSeparator": "\r\n",
                 "staticStatField": "staticStatLines",
             },
             "conditionalDescriptionField": "conditionalDescriptions",
@@ -1005,10 +1003,10 @@ class ValidationTests(unittest.TestCase):
         planner["staticStatLines"] = deepcopy(static_lines)
         planner["conditionalDescriptions"] = deepcopy(conditional)
         planner["description"] = (
-            "Augment effect\r\n\r\n"
-            "Augment flavor\r\n\r\n"
-            "Augment summary\r\n\r\n"
-            "+20.0% Reload Speed\r\n\r\n"
+            "Augment effect\r\n"
+            "Augment flavor\r\n"
+            "Augment summary\r\n"
+            "+20.0% Reload Speed\r\n"
             "<Bold>On Taking Damage</>:\r\n"
             "  +25% Damage Resistance\r\n"
             "  Lasts <Bold>5 seconds</>."

@@ -332,7 +332,7 @@ export function reduceBuild(
       if (!choice) {
         return state;
       }
-      return resolveModifierTargets(index, {
+      const selected = resolveModifierTargets(index, {
         ...state,
         perks: state.perks.map((placement) =>
           placement.perkId === action.perkId
@@ -344,6 +344,10 @@ export function reduceBuild(
             : placement,
         ),
       });
+      // Resolution rejects a target whose own chain depends on this modifier.
+      // Refuse the selection outright rather than silently substituting another.
+      const applied = selected.perks.find((placement) => placement.perkId === action.perkId);
+      return applied?.targetId === action.targetId ? selected : state;
     }
     case "move-perk": {
       const layout = index.layoutByKitId.get(state.kitId);
@@ -532,10 +536,37 @@ export function gridCellLabel(cell: GridCell): string {
   return `${String.fromCharCode(65 + cell.column)}${cell.row + 1}`;
 }
 
+function footprintKey(shape: PerkShape): string {
+  return shape.occupiedCells.map(cellKey).sort().join("|");
+}
+
+/**
+ * Every perk serializes four allowed rotations, but each shape is a rectangle,
+ * so Default/Clockwise180 and Clockwise90/Clockwise270 occupy identical cells.
+ * Rotation is only offered when it actually moves the footprint.
+ */
+export function canRotate(perk: PerkRecord): boolean {
+  const [shape] = perk.grid.shapes;
+  if (!shape) return false;
+  const base = footprintKey(rotateShape(shape, "Default"));
+  return perk.grid.allowedRotations.some(
+    (rotation) => footprintKey(rotateShape(shape, rotation)) !== base,
+  );
+}
+
+/** The next allowed rotation that changes the footprint, or `rotation` if none does. */
 export function nextRotation(perk: PerkRecord, rotation: Rotation): Rotation {
   const rotations = perk.grid.allowedRotations;
-  const index = rotations.indexOf(rotation);
-  return rotations[(index + 1 + rotations.length) % rotations.length] ?? "Default";
+  const [shape] = perk.grid.shapes;
+  if (!shape || !rotations.length) return rotation;
+
+  const current = rotations.indexOf(rotation);
+  const currentKey = footprintKey(rotateShape(shape, rotation));
+  for (let step = 1; step <= rotations.length; step += 1) {
+    const candidate = rotations[(current + step + rotations.length) % rotations.length];
+    if (candidate && footprintKey(rotateShape(shape, candidate)) !== currentKey) return candidate;
+  }
+  return rotation;
 }
 
 interface GridNode {
@@ -611,6 +642,10 @@ function modifierFamilyTargetGroups(
   const perk = index.byId.get(perkId);
   if (!perk || perk.kind !== "perk" || perk.perkType !== "modifier") return [];
 
+  // A modifier joins a family by touching a chip already in it, so every
+  // family stays one orthogonally connected run of chips reaching its terminal.
+  // That is also what makes the connector bars drawable: a linked modifier
+  // always shares an edge with a same-family chip.
   const adjacentIds = adjacentNodeIds(nodes, perkId);
   const exposedFamilyIds = new Set(
     [...adjacentIds]

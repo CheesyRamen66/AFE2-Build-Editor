@@ -37,8 +37,8 @@ describe("RecordPicker attachment descriptions", () => {
               id: "augment-formatted",
               displayName: "Formatted Augment",
               description: (
-                "Summary.\r\n\r\n"
-                + "+20.0% Reload Speed\r\n\r\n"
+                "Summary.\r\n"
+                + "+20.0% Reload Speed\r\n"
                 + "<Bold>On Hit</>:\r\n"
                 + "  +10% Damage"
               ),
@@ -53,7 +53,7 @@ describe("RecordPicker attachment descriptions", () => {
     const option = screen.getByRole("button", { name: /Formatted Augment/i });
     expect(option).toHaveAttribute("data-record-kind", "augment");
     expect(option.querySelector(".picker-option__copy small")?.textContent).toBe(
-      "Summary.\n\n+20.0% Reload Speed\n\nOn Hit:\n  +10% Damage",
+      "Summary.\n+20.0% Reload Speed\nOn Hit:\n  +10% Damage",
     );
   });
 });

@@ -183,11 +183,11 @@ class AttachmentDescriptionTests(unittest.TestCase):
         self.assertEqual(
             description,
             (
-                "Detailed effect.\r\n\r\n"
-                "Flavor text.\r\n\r\n"
-                "Summary.\r\n\r\n"
+                "Detailed effect.\r\n"
+                "Flavor text.\r\n"
+                "Summary.\r\n"
                 "+10.0% Damage\r\n"
-                "+20.0% Reload Speed\r\n\r\n"
+                "+20.0% Reload Speed\r\n"
                 "<Bold>On Hit</>:\r\n"
                 "  -75% Weak Point DMG Bonus\r\n"
                 "  Lasts <Bold>5 seconds</>."
@@ -339,7 +339,7 @@ class AttachmentDescriptionTests(unittest.TestCase):
             description,
             (
                 "+15.0% Magazine Capacity\r\n"
-                "+4.0% Max Ammo\r\n\r\n"
+                "+4.0% Max Ammo\r\n"
                 "<Bold>When Magazine is Empty</>:\r\n"
                 "  +10% Reload Speed"
             ),
@@ -423,7 +423,7 @@ class AttachmentDescriptionTests(unittest.TestCase):
         self.assertEqual(
             description,
             (
-                "+20.0% Reload Speed\r\n\r\n"
+                "+20.0% Reload Speed\r\n"
                 "<Bold>When Magazine is Empty</>:\r\n  -20% Reload Speed"
             ),
         )
@@ -775,7 +775,7 @@ class AttachmentDescriptionTests(unittest.TestCase):
             description,
             (
                 "+20.0% Stopping Power\r\n"
-                "+20.0% Recoil\r\n\r\n"
+                "+20.0% Recoil\r\n"
                 "<Bold>While Stationary</>:\r\n"
                 "  +20% Stopping Power\r\n"
                 "  -20% Recoil\r\n"

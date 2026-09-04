@@ -493,9 +493,11 @@ becomes `dependencies.acceptedModifierTags`. A provided tag matches an exact
 accepted tag or one of its descendants; the comparison is directional. The
 normalizer publishes `possibleTargetPerkIds` on the modifier,
 `possibleModifierPerkIds` on the target, and
-`requiresConnectedCompatibleTarget: true`. In the game, the compatible target
-may be anywhere in the same orthogonally connected chip group rather than
-directly touching the modifier, and modifier-to-modifier chains are valid.
+`requiresConnectedCompatibleTarget: true`. In the game, a modifier joins a
+family by orthogonally touching a chip already in that family, so the compatible
+target need not touch the modifier itself: modifier-to-modifier chains are valid
+and a family may run across any number of chips. Chips outside the family do not
+conduct, so a core perk between a modifier and its ability breaks the run.
 
 ## Perk-grid UI asset evidence
 

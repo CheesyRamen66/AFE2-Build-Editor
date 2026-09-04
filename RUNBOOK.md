@@ -192,9 +192,10 @@ jq '.records[]
 Repeated names are expected here: each row is the implementation for a
 particular weapon family, and its values can differ. The selected weapon's
 augment slot already references only the compatible implementation IDs.
-The composed `description` puts one generated stat on each line. Triggered
-rows appear beneath their trigger with a two-space indent, and generated signs
-are compact, for example `+20.0%` or `-75%`.
+The composed `description` puts every authored section, generated stat, and
+trigger on consecutive lines without blank spacer rows. Triggered rows appear
+beneath their trigger with a two-space indent, and generated signs are compact,
+for example `+20.0%` or `-75%`.
 
 Confirm that every selectable attachment has picker copy (a clean run prints
 nothing):

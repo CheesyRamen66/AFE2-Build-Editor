@@ -348,11 +348,11 @@ regions under `descriptionPanel`. All three attachment kinds publish each
 ready-to-render computed row under `staticStatLines` and the game's ordered
 additional/conditional UI rows under `conditionalDescriptions`. To give a
 simple editor one complete explanation of the choice, top-level `description`
-is a readability-oriented composition of those sections, with the line and
-section separators and two-space conditional-stat indent declared by the
-matching entry under `textContract`. Every generated stat occupies its own
-line; a trigger such as `On Hit:` occupies the preceding line and its child
-rows are indented. Generated signs are compact (`+20.0%`, not `+ 20.0%`). The
+is a readability-oriented composition of those sections, with a single line
+separator and two-space conditional-stat indent declared by the matching entry
+under `textContract`. Every generated stat occupies its own line; a trigger
+such as `On Hit:` occupies the preceding line and its child rows are indented.
+Generated signs are compact (`+20.0%`, not `+ 20.0%`). The
 structured fields remain authoritative for a closer recreation of the game
 panel. The frontend may render the composed string directly with whitespace
 preservation; it must not derive percentages or reinterpret effect magnitudes.

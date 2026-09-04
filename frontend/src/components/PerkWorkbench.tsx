@@ -8,14 +8,17 @@ import {
 } from "lucide-react";
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
   type DragEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { catalogueAssetUrl, plainGameText } from "../data/catalogue";
 import {
+  availableModifierFamilyChoices,
   gridCellLabel,
   nextRotation,
   occupiedCells,
@@ -25,6 +28,7 @@ import {
   validatePlacement,
   type BuildAction,
   type BuildState,
+  type ModifierFamilyChoice,
   type PlacedPerk,
 } from "../model/build";
 import type {
@@ -86,6 +90,15 @@ interface GridChipTooltip {
   x: number;
   y: number;
   placement: "above" | "below";
+}
+
+type FamilyAssignmentKind = "place" | "move" | "rotate";
+
+interface PendingFamilyAssignment {
+  kind: FamilyAssignmentKind;
+  placement: PlacedPerk;
+  choices: ModifierFamilyChoice[];
+  successMessage: string;
 }
 
 const FALLBACK_GRID_METRICS: GridMetrics = {
@@ -413,11 +426,15 @@ function familyLinkedAtPlacement(
     : [...build.perks, nextPlacement];
   const hypothetical = resolveModifierTargets(index, { ...build, perks: nextPerks });
 
-  if (
-    perk.dependencies?.requiresConnectedCompatibleTarget &&
-    validateGridLinks(index, hypothetical).some((issue) => issue.perkId === perk.id)
-  ) {
-    return false;
+  if (perk.dependencies?.requiresConnectedCompatibleTarget) {
+    const choices = availableModifierFamilyChoices(index, hypothetical, perk.id);
+    if (nextPlacement.targetFamilyId) {
+      if (!choices.some((choice) => choice.familyId === nextPlacement.targetFamilyId)) {
+        return false;
+      }
+    } else if (!choices.length) {
+      return false;
+    }
   }
 
   if (!previousRootId || previousFamilyIds.length <= 1) return true;
@@ -568,6 +585,136 @@ function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
+interface ModifierFamilyDialogProps {
+  index: CatalogueIndex;
+  perk: PerkRecord;
+  choices: ModifierFamilyChoice[];
+  onSelect: (choice: ModifierFamilyChoice) => void;
+  onCancel: () => void;
+}
+
+function ModifierFamilyDialog({
+  index,
+  perk,
+  choices,
+  onSelect,
+  onCancel,
+}: ModifierFamilyDialogProps) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const firstChoiceRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef(onCancel);
+  cancelRef.current = onCancel;
+
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    firstChoiceRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        cancelRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+      previous?.focus();
+    };
+  }, []);
+
+  return createPortal(
+    <div
+      className="picker-overlay modifier-family-overlay"
+      data-placement="center"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        className="picker-dialog modifier-family-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+      >
+        <header className="picker-header modifier-family-dialog__header">
+          <div>
+            <span className="eyebrow">Modifier target required</span>
+            <h2 id={titleId}>Choose a family for {perk.displayName}</h2>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={onCancel}
+            aria-label="Cancel family selection"
+          >
+            <X size={20} />
+          </button>
+        </header>
+
+        <div className="modifier-family-dialog__body">
+          <p id={descriptionId}>
+            This position touches more than one compatible ability family. Choose which one this
+            modifier should affect.
+          </p>
+          <div className="modifier-family-options">
+            {choices.flatMap((choice, choiceIndex) => {
+              const record = index.byId.get(choice.familyId);
+              if (!record) return [];
+              return [
+                <button
+                  ref={choiceIndex === 0 ? firstChoiceRef : undefined}
+                  type="button"
+                  className="modifier-family-option"
+                  key={choice.familyId}
+                  onClick={() => onSelect(choice)}
+                >
+                  <RecordVisual record={record} />
+                  <span>
+                    <small>Attach to</small>
+                    <strong>{record.displayName}</strong>
+                    <span>{plainGameText(record.description) || "Compatible family"}</span>
+                  </span>
+                </button>,
+              ];
+            })}
+          </div>
+          <button
+            type="button"
+            className="button button--secondary modifier-family-dialog__cancel"
+            onClick={onCancel}
+          >
+            Cancel placement
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export function PerkWorkbench({
   index,
   kit,
@@ -587,6 +734,8 @@ export function PerkWorkbench({
   const [gridMetrics, setGridMetrics] = useState<GridMetrics>(FALLBACK_GRID_METRICS);
   const [grabOffset, setGrabOffset] = useState<GrabOffset | null>(null);
   const [modifierTargetId, setModifierTargetId] = useState<string | null>(null);
+  const [pendingFamilyAssignment, setPendingFamilyAssignment] =
+    useState<PendingFamilyAssignment | null>(null);
   const [gridChipTooltip, setGridChipTooltip] = useState<GridChipTooltip | null>(null);
   const hoveredGridChipRef = useRef<HoveredGridChip | null>(null);
   const focusedGridChipRef = useRef<HoveredGridChip | null>(null);
@@ -596,6 +745,7 @@ export function PerkWorkbench({
   const boardRef = useRef<HTMLDivElement>(null);
   const gridMetricsRef = useRef<GridMetrics>(FALLBACK_GRID_METRICS);
   const grabOffsetRef = useRef<GrabOffset | null>(null);
+  const pendingFamilyFilterIdRef = useRef<string | null>(null);
   const suppressPickupClickRef = useRef(false);
   const filterBeforeCompatibilityRef = useRef<PerkFilter>("all");
 
@@ -629,6 +779,8 @@ export function PerkWorkbench({
     focusedGridChipRef.current = null;
     setFilter(filterBeforeCompatibilityRef.current);
     setModifierTargetId(null);
+    pendingFamilyFilterIdRef.current = null;
+    setPendingFamilyAssignment(null);
     setGridChipTooltip(null);
   }, [kit.id]);
 
@@ -864,6 +1016,7 @@ export function PerkWorkbench({
     const shape = rotateShape(perk.grid.shapes[0], rotation);
     updateGrabOffset(centeredGrabOffset(shape, metrics));
     if (placedIds.has(perk.id)) {
+      pendingFamilyFilterIdRef.current = null;
       setPendingPerkId(null);
       setPendingRotation("Default");
       setMovingPerkId(perk.id);
@@ -872,6 +1025,7 @@ export function PerkWorkbench({
       notify(`${perk.displayName} picked up. Choose a highlighted grid cell.`);
       return;
     }
+    pendingFamilyFilterIdRef.current = modifierTargetId;
     setPendingPerkId(perk.id);
     setPendingRotation("Default");
     setMovingPerkId(null);
@@ -887,6 +1041,7 @@ export function PerkWorkbench({
     setDraggingPerkId(null);
     setPointerPosition(null);
     updateGrabOffset(null);
+    pendingFamilyFilterIdRef.current = null;
   };
 
   const discardHeldPerk = () => {
@@ -897,6 +1052,126 @@ export function PerkWorkbench({
     hoveredGridChipRef.current = null;
     focusedGridChipRef.current = null;
     notify(`${heldRecord?.displayName ?? "Perk"} removed.`);
+  };
+
+  const dispatchPlacement = (
+    kind: FamilyAssignmentKind,
+    placement: PlacedPerk,
+    successMessage: string,
+  ) => {
+    if (kind === "place") {
+      dispatch({ type: "place-perk", placement });
+    } else if (kind === "move") {
+      dispatch({
+        type: "move-perk",
+        perkId: placement.perkId,
+        row: placement.row,
+        column: placement.column,
+        targetId: placement.targetId,
+        targetFamilyId: placement.targetFamilyId,
+      });
+    } else {
+      dispatch({
+        type: "rotate-perk",
+        perkId: placement.perkId,
+        rotation: placement.rotation,
+        targetId: placement.targetId,
+        targetFamilyId: placement.targetFamilyId,
+      });
+    }
+
+    if (kind !== "rotate") clearHeldState();
+    hoveredGridChipRef.current = { kind: "perk", perkId: placement.perkId };
+    notify(successMessage);
+  };
+
+  const stagePlacement = (
+    kind: FamilyAssignmentKind,
+    candidate: PlacedPerk,
+    successMessage: string,
+  ): boolean => {
+    const perk = index.byId.get(candidate.perkId);
+    if (perk?.kind !== "perk" || perk.perkType !== "modifier") {
+      dispatchPlacement(kind, candidate, successMessage);
+      return true;
+    }
+
+    const hypotheticalPerks = kind === "place"
+      ? [...build.perks, candidate]
+      : build.perks.map((placement) => (
+          placement.perkId === candidate.perkId ? candidate : placement
+        ));
+    const hypothetical = { ...build, perks: hypotheticalPerks };
+    const familySlotOrder = new Map(
+      kit.abilitySlots.map((slot) => {
+        const roleOrder = slot.role === "primary" ? 0
+          : slot.role === "secondary" ? 1
+            : slot.role === "passive" ? 2
+              : 3;
+        return [build.abilityIds[slot.index], roleOrder * 100 + slot.index] as const;
+      }).filter((entry): entry is readonly [string, number] => entry[0] !== null),
+    );
+    const choices = availableModifierFamilyChoices(index, hypothetical, candidate.perkId)
+      .sort((left, right) => (
+        (familySlotOrder.get(left.familyId) ?? Number.MAX_SAFE_INTEGER) -
+        (familySlotOrder.get(right.familyId) ?? Number.MAX_SAFE_INTEGER)
+      ));
+
+    const prepareForFamily = (
+      familyId: string,
+      choice?: ModifierFamilyChoice,
+    ): PlacedPerk => {
+      const { targetId: _targetId, ...withoutTarget } = candidate;
+      return {
+        ...withoutTarget,
+        targetFamilyId: familyId,
+        ...(choice ? { targetId: choice.targetId } : {}),
+      };
+    };
+
+    const placementFilterId = kind === "place" ? pendingFamilyFilterIdRef.current : null;
+    if (placementFilterId) {
+      const filteredChoice = choices.find((choice) => choice.familyId === placementFilterId);
+      dispatchPlacement(
+        kind,
+        prepareForFamily(placementFilterId, filteredChoice),
+        successMessage,
+      );
+      return true;
+    }
+
+    if (candidate.targetFamilyId) {
+      const existingChoice = choices.find(
+        (choice) => choice.familyId === candidate.targetFamilyId,
+      );
+      dispatchPlacement(
+        kind,
+        prepareForFamily(candidate.targetFamilyId, existingChoice),
+        successMessage,
+      );
+      return true;
+    }
+
+    if (choices.length === 1) {
+      const [choice] = choices;
+      dispatchPlacement(kind, prepareForFamily(choice.familyId, choice), successMessage);
+      return true;
+    }
+
+    if (choices.length > 1) {
+      clearHeldState();
+      hideGridChipTooltip();
+      setPendingFamilyAssignment({ kind, placement: candidate, choices, successMessage });
+      return true;
+    }
+
+    const {
+      targetId: _targetId,
+      targetFamilyId: _targetFamilyId,
+      ...withoutTarget
+    } = candidate;
+    dispatchPlacement(kind, withoutTarget, successMessage);
+    return true;
   };
 
   const tryPlace = (perkId: string, row: number, column: number, rotation: Rotation): boolean => {
@@ -911,11 +1186,11 @@ export function PerkWorkbench({
       notify(result.reason ?? "That perk cannot be placed there.", "error");
       return false;
     }
-    dispatch({ type: "place-perk", placement: candidate });
-    clearHeldState();
-    hoveredGridChipRef.current = { kind: "perk", perkId };
-    notify(`${perk.displayName} placed at ${gridCellLabel({ row, column })}.`);
-    return true;
+    return stagePlacement(
+      "place",
+      candidate,
+      `${perk.displayName} placed at ${gridCellLabel({ row, column })}.`,
+    );
   };
 
   const movePerk = (perkId: string, row: number, column: number): boolean => {
@@ -928,11 +1203,11 @@ export function PerkWorkbench({
       notify(result.reason ?? "That perk cannot be moved there.", "error");
       return false;
     }
-    dispatch({ type: "move-perk", perkId, row, column });
-    clearHeldState();
-    hoveredGridChipRef.current = { kind: "perk", perkId };
-    notify(`${perk.displayName} moved to ${gridCellLabel({ row, column })}.`);
-    return true;
+    return stagePlacement(
+      "move",
+      candidate,
+      `${perk.displayName} moved to ${gridCellLabel({ row, column })}.`,
+    );
   };
 
   const commitSnappedPlacement = (snapped: SnappedPlacement | undefined) => {
@@ -1144,8 +1419,11 @@ export function PerkWorkbench({
         gridMetricsRef.current,
       ));
     }
-    dispatch({ type: "rotate-perk", perkId: perk.id, rotation });
-    notify(`${perk.displayName} rotated to ${footprintLabel(perk, rotation)}.`);
+    stagePlacement(
+      "rotate",
+      candidate,
+      `${perk.displayName} rotated to ${footprintLabel(perk, rotation)}.`,
+    );
   };
 
   const rotatePending = () => {
@@ -1216,6 +1494,32 @@ export function PerkWorkbench({
     notify(`${perk?.displayName ?? "Perk"} removed.`);
   };
 
+  const choosePendingFamily = (choice: ModifierFamilyChoice) => {
+    if (!pendingFamilyAssignment) return;
+    const {
+      targetId: _targetId,
+      targetFamilyId: _targetFamilyId,
+      ...withoutTarget
+    } = pendingFamilyAssignment.placement;
+    const placement = {
+      ...withoutTarget,
+      targetId: choice.targetId,
+      targetFamilyId: choice.familyId,
+    };
+    const { kind, successMessage } = pendingFamilyAssignment;
+    setPendingFamilyAssignment(null);
+    dispatchPlacement(kind, placement, successMessage);
+  };
+
+  const cancelPendingFamily = () => {
+    if (!pendingFamilyAssignment) return;
+    const message = pendingFamilyAssignment.kind === "rotate"
+      ? "Rotation cancelled."
+      : "Placement cancelled.";
+    setPendingFamilyAssignment(null);
+    notify(message);
+  };
+
   const gridChipAtPointer = (): HoveredGridChip | null | undefined => {
     const point = lastPointerPositionRef.current;
     const board = boardRef.current;
@@ -1246,6 +1550,7 @@ export function PerkWorkbench({
 
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
+      if (pendingFamilyAssignment) return;
       if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || isEditableTarget(event.target)) {
         return;
       }
@@ -1472,6 +1777,7 @@ export function PerkWorkbench({
                   draggable
                   onDragStart={(event) => {
                     hideGridChipTooltip(tooltipKey);
+                    pendingFamilyFilterIdRef.current = modifierTargetId;
                     const rotation = pendingPerkId === perk.id ? pendingRotation : "Default";
                     const metrics = refreshGridMetrics();
                     const shape = rotateShape(perk.grid.shapes[0], rotation);
@@ -1490,6 +1796,7 @@ export function PerkWorkbench({
                     setPendingRotation("Default");
                     setPointerPosition(null);
                     updateGrabOffset(null);
+                    pendingFamilyFilterIdRef.current = null;
                   }}
                   onClick={(event) => choosePerk(perk, event.clientX, event.clientY)}
                   onMouseEnter={(event) => showGridChipTooltip(
@@ -1775,6 +2082,7 @@ export function PerkWorkbench({
                     data-link-status={hasIssue ? "unlinked" : "linked"}
                     onDragStart={(event) => {
                       hideGridChipTooltip(chipKey);
+                      pendingFamilyFilterIdRef.current = null;
                       suppressPickupClickRef.current = true;
                       const metrics = refreshGridMetrics();
                       const offset = grabOffsetFromBounds(
@@ -1811,6 +2119,7 @@ export function PerkWorkbench({
                       }
                       setDraggingPerkId(null);
                       updateGrabOffset(null);
+                      pendingFamilyFilterIdRef.current = null;
                       window.requestAnimationFrame(() => {
                         suppressPickupClickRef.current = false;
                       });
@@ -1854,6 +2163,7 @@ export function PerkWorkbench({
                       ));
                       setPendingPerkId(null);
                       setPendingRotation("Default");
+                      pendingFamilyFilterIdRef.current = null;
                       setMovingPerkId(perk.id);
                       setDraggingPerkId(null);
                       setPointerPosition({ x: event.clientX, y: event.clientY });
@@ -1909,6 +2219,19 @@ export function PerkWorkbench({
           <span>{gridChipTooltip.description}</span>
         </div>
       )}
+
+      {pendingFamilyAssignment && (() => {
+        const perk = index.byId.get(pendingFamilyAssignment.placement.perkId);
+        return perk?.kind === "perk" ? (
+          <ModifierFamilyDialog
+            index={index}
+            perk={perk}
+            choices={pendingFamilyAssignment.choices}
+            onSelect={choosePendingFamily}
+            onCancel={cancelPendingFamily}
+          />
+        ) : null;
+      })()}
     </section>
   );
 }

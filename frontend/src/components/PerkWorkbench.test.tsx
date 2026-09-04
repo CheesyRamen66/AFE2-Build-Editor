@@ -99,6 +99,78 @@ function mockGridGeometry() {
 }
 
 describe("PerkWorkbench pickup interaction", () => {
+  it("asks which terminal family owns a modifier placed against two families", () => {
+    renderStatefulWorkbench();
+    const board = mockGridGeometry();
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Pick up Core Perk for placement",
+    }), { clientX: 700, clientY: 120 });
+    fireEvent.click(board.querySelector<HTMLElement>(
+      ".perk-cell[data-row='0'][data-column='2']",
+    )!);
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Pick up Linked Modifier for placement",
+    }), { clientX: 700, clientY: 120 });
+    fireEvent.click(board.querySelector<HTMLElement>(
+      ".perk-cell[data-row='0'][data-column='1']",
+    )!);
+
+    const dialog = screen.getByRole("dialog", {
+      name: /Choose a family for Linked Modifier/i,
+    });
+    const primaryChoice = within(dialog).getByRole("button", { name: /Primary Ability/i });
+    const coreChoice = within(dialog).getByRole("button", { name: /Core Perk/i });
+    expect(primaryChoice).toBeInTheDocument();
+    expect(coreChoice).toBeInTheDocument();
+    fireEvent.click(coreChoice);
+
+    expect(screen.queryByRole("dialog", {
+      name: /Choose a family for Linked Modifier/i,
+    })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Linked Modifier, 1×1, at B1/ }))
+      .toHaveAttribute("data-link-status", "linked");
+    const connectors = document.querySelectorAll(".family-connector");
+    expect(connectors).toHaveLength(1);
+    expect(connectors[0]).toHaveAttribute("data-family-id", "perk-core");
+  });
+
+  it("uses the active compatibility family without prompting on ambiguous placement", () => {
+    renderStatefulWorkbench();
+    const board = mockGridGeometry();
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Pick up Core Perk for placement",
+    }), { clientX: 700, clientY: 120 });
+    fireEvent.click(board.querySelector<HTMLElement>(
+      ".perk-cell[data-row='0'][data-column='2']",
+    )!);
+
+    const primaryAbility = screen.getByRole("button", {
+      name: /primary ability: Primary Ability/i,
+    });
+    fireEvent.mouseEnter(primaryAbility);
+    fireEvent.keyDown(window, { key: "r" });
+    expect(screen.getByRole("button", { name: "Show all perks" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Pick up Linked Modifier for placement",
+    }), { clientX: 700, clientY: 120 });
+    fireEvent.click(board.querySelector<HTMLElement>(
+      ".perk-cell[data-row='0'][data-column='1']",
+    )!);
+
+    expect(screen.queryByRole("dialog", {
+      name: /Choose a family for Linked Modifier/i,
+    })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Linked Modifier, 1×1, at B1/ }))
+      .toHaveAttribute("data-link-status", "linked");
+    const connectors = document.querySelectorAll(".family-connector");
+    expect(connectors).toHaveLength(1);
+    expect(connectors[0]).toHaveAttribute("data-family-id", "ability-primary");
+  });
+
   it("targets a newly mounted brick with D and F before mouse re-entry", () => {
     renderStatefulWorkbench();
     const board = mockGridGeometry();

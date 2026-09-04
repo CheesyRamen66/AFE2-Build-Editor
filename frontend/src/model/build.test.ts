@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSyntheticPlannerCatalogue } from "../test/fixtures/plannerCatalogue";
 import {
   attachmentSlotKey,
+  availableModifierFamilyChoices,
   availableModifierTargetIds,
   createBuildForKit,
   hydrateLocalBuild,
@@ -443,6 +444,7 @@ describe("build model", () => {
       const resolved = stateWithModifierAt(0, 1);
 
       expect(resolved.perks[0].targetId).toBe("ability-primary");
+      expect(resolved.perks[0].targetFamilyId).toBe("ability-primary");
       expect(validateGridLinks(index, resolved)).toEqual([]);
     });
 
@@ -458,7 +460,7 @@ describe("build model", () => {
       ]);
     });
 
-    it("preserves an explicit target when both a core and ability are valid", () => {
+    it("leaves an ambiguous modifier unresolved until a family is explicitly selected", () => {
       let state = createBuildForKit(index, "kit-alpha");
       state = reduceBuild(index, state, {
         type: "place-perk",
@@ -473,9 +475,27 @@ describe("build model", () => {
         "ability-primary",
         "perk-core",
       ]);
-      expect(state.perks.find((entry) => entry.perkId === "perk-modifier")?.targetId).toBe(
-        "ability-primary",
-      );
+      expect(availableModifierFamilyChoices(index, state, "perk-modifier")).toEqual([
+        {
+          familyId: "ability-primary",
+          targetId: "ability-primary",
+          targetIds: ["ability-primary"],
+        },
+        {
+          familyId: "perk-core",
+          targetId: "perk-core",
+          targetIds: ["perk-core"],
+        },
+      ]);
+      const ambiguous = state.perks.find((entry) => entry.perkId === "perk-modifier");
+      expect(ambiguous?.targetId).toBeUndefined();
+      expect(ambiguous?.targetFamilyId).toBeUndefined();
+      expect(validateGridLinks(index, state)).toEqual([
+        expect.objectContaining({
+          code: "disconnected-modifier",
+          perkId: "perk-modifier",
+        }),
+      ]);
 
       const selected = reduceBuild(index, state, {
         type: "select-perk-target",
@@ -483,10 +503,91 @@ describe("build model", () => {
         targetId: "perk-core",
       });
 
-      expect(selected.perks.find((entry) => entry.perkId === "perk-modifier")?.targetId).toBe(
-        "perk-core",
-      );
+      expect(selected.perks.find((entry) => entry.perkId === "perk-modifier")).toMatchObject({
+        targetId: "perk-core",
+        targetFamilyId: "perk-core",
+      });
+      expect(validateGridLinks(index, selected)).toEqual([]);
       expect(resolveModifierTargets(index, selected)).toEqual(selected);
+    });
+
+    it("keeps an explicitly selected family pinned while disconnected and relinks to it", () => {
+      let state = createBuildForKit(index, "kit-alpha");
+      state = reduceBuild(index, state, {
+        type: "place-perk",
+        placement: placement("perk-core", 0, 2),
+      });
+      state = reduceBuild(index, state, {
+        type: "place-perk",
+        placement: placement("perk-modifier", 0, 1),
+      });
+      state = reduceBuild(index, state, {
+        type: "select-perk-target",
+        perkId: "perk-modifier",
+        targetId: "ability-primary",
+      });
+
+      const disconnected = reduceBuild(index, state, {
+        type: "move-perk",
+        perkId: "perk-modifier",
+        row: 0,
+        column: 3,
+      });
+      const disconnectedModifier = disconnected.perks.find(
+        (entry) => entry.perkId === "perk-modifier",
+      );
+      expect(disconnectedModifier?.targetId).toBeUndefined();
+      expect(disconnectedModifier?.targetFamilyId).toBe("ability-primary");
+
+      const reconnected = reduceBuild(index, disconnected, {
+        type: "move-perk",
+        perkId: "perk-modifier",
+        row: 0,
+        column: 1,
+      });
+      expect(reconnected.perks.find((entry) => entry.perkId === "perk-modifier"))
+        .toMatchObject({
+          targetId: "ability-primary",
+          targetFamilyId: "ability-primary",
+        });
+    });
+
+    it("does not let a family-assigned modifier bridge a child to another family", () => {
+      const child = index.byId.get("perk-modifier-b") as PerkRecord;
+      child.dependencies = {
+        ...child.dependencies,
+        possibleTargetPerkIds: ["perk-core"],
+        targetSelection: {
+          ...child.dependencies?.targetSelection,
+          candidateIds: ["perk-core"],
+          required: true,
+        },
+      };
+
+      let state = createBuildForKit(index, "kit-alpha");
+      for (const nextPlacement of [
+        placement("perk-core", 0, 2),
+        placement("perk-modifier", 0, 1),
+      ]) {
+        state = reduceBuild(index, state, { type: "place-perk", placement: nextPlacement });
+      }
+      state = reduceBuild(index, state, {
+        type: "select-perk-target",
+        perkId: "perk-modifier",
+        targetId: "ability-primary",
+      });
+      state = reduceBuild(index, state, {
+        type: "place-perk",
+        placement: placement("perk-modifier-b", 1, 1),
+      });
+
+      expect(state.perks.find((entry) => entry.perkId === "perk-modifier-b")?.targetId)
+        .toBeUndefined();
+      expect(availableModifierFamilyChoices(index, state, "perk-modifier-b")).toEqual([]);
+      expect(validateGridLinks(index, state)).toContainEqual(expect.objectContaining({
+        code: "disconnected-modifier",
+        perkId: "perk-modifier-b",
+      }));
     });
 
     it("excludes and rejects a modifier target that would create a cycle", () => {
@@ -498,29 +599,27 @@ describe("build model", () => {
       ]) {
         state = reduceBuild(index, state, { type: "place-perk", placement: nextPlacement });
       }
-      state = reduceBuild(index, state, {
+      const rejected = reduceBuild(index, state, {
         type: "select-perk-target",
         perkId: "perk-modifier-b",
         targetId: "perk-modifier",
       });
 
-      expect(
-        state.perks.find((entry) => entry.perkId === "perk-modifier")?.targetId,
-      ).toBe("perk-core");
-      expect(
-        state.perks.find((entry) => entry.perkId === "perk-modifier-b")?.targetId,
-      ).toBe("perk-modifier");
+      expect(rejected).toBe(state);
+      expect(state.perks.find((entry) => entry.perkId === "perk-modifier-b"))
+        .toMatchObject({ targetId: "perk-core", targetFamilyId: "perk-core" });
       expect(availableModifierTargetIds(index, state, "perk-modifier")).toEqual([
         "perk-core",
+        "perk-modifier-b",
       ]);
 
-      const rejected = reduceBuild(index, state, {
+      const selected = reduceBuild(index, state, {
         type: "select-perk-target",
         perkId: "perk-modifier",
         targetId: "perk-modifier-b",
       });
-
-      expect(rejected).toBe(state);
+      expect(selected.perks.find((entry) => entry.perkId === "perk-modifier"))
+        .toMatchObject({ targetId: "perk-modifier-b", targetFamilyId: "perk-core" });
     });
   });
 });

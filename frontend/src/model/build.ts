@@ -19,6 +19,8 @@ export interface PlacedPerk {
   column: number;
   rotation: Rotation;
   targetId?: string;
+  /** Sticky terminal ability/core family, recorded once the modifier resolves. */
+  targetFamilyId?: string;
 }
 
 export interface WeaponBuild {
@@ -42,8 +44,21 @@ export type BuildAction =
   | { type: "select-ability"; slotIndex: number; abilityId: string }
   | { type: "reset-ability"; slotIndex: number }
   | { type: "place-perk"; placement: PlacedPerk }
-  | { type: "move-perk"; perkId: string; row: number; column: number }
-  | { type: "rotate-perk"; perkId: string; rotation: Rotation }
+  | {
+      type: "move-perk";
+      perkId: string;
+      row: number;
+      column: number;
+      targetId?: string;
+      targetFamilyId?: string;
+    }
+  | {
+      type: "rotate-perk";
+      perkId: string;
+      rotation: Rotation;
+      targetId?: string;
+      targetFamilyId?: string;
+    }
   | { type: "select-perk-target"; perkId: string; targetId: string }
   | { type: "remove-perk"; perkId: string }
   | { type: "clear-perks" }
@@ -312,14 +327,20 @@ export function reduceBuild(
       });
     }
     case "select-perk-target": {
-      if (!availableModifierTargetIds(index, state, action.perkId).includes(action.targetId)) {
+      const choice = availableModifierFamilyChoices(index, state, action.perkId)
+        .find((candidate) => candidate.targetIds.includes(action.targetId));
+      if (!choice) {
         return state;
       }
       return resolveModifierTargets(index, {
         ...state,
         perks: state.perks.map((placement) =>
           placement.perkId === action.perkId
-            ? { ...placement, targetId: action.targetId }
+            ? {
+                ...placement,
+                targetId: action.targetId,
+                targetFamilyId: choice.familyId,
+              }
             : placement,
         ),
       });
@@ -328,7 +349,16 @@ export function reduceBuild(
       const layout = index.layoutByKitId.get(state.kitId);
       const current = state.perks.find((placement) => placement.perkId === action.perkId);
       if (!layout || !current) return state;
-      const moved = { ...current, row: action.row, column: action.column };
+      const moved = {
+        ...current,
+        row: action.row,
+        column: action.column,
+        ...(Object.prototype.hasOwnProperty.call(action, "targetFamilyId")
+          ? action.targetFamilyId
+            ? { targetId: action.targetId, targetFamilyId: action.targetFamilyId }
+            : { targetId: undefined, targetFamilyId: undefined }
+          : {}),
+      };
       if (!validatePlacement(index, layout, state.perks, moved, action.perkId).valid) return state;
       return resolveModifierTargets(index, {
         ...state,
@@ -341,7 +371,15 @@ export function reduceBuild(
       const layout = index.layoutByKitId.get(state.kitId);
       const current = state.perks.find((placement) => placement.perkId === action.perkId);
       if (!layout || !current) return state;
-      const rotated = { ...current, rotation: action.rotation };
+      const rotated = {
+        ...current,
+        rotation: action.rotation,
+        ...(Object.prototype.hasOwnProperty.call(action, "targetFamilyId")
+          ? action.targetFamilyId
+            ? { targetId: action.targetId, targetFamilyId: action.targetFamilyId }
+            : { targetId: undefined, targetFamilyId: undefined }
+          : {}),
+      };
       if (!validatePlacement(index, layout, state.perks, rotated, action.perkId).valid) return state;
       return resolveModifierTargets(index, {
         ...state,
@@ -506,6 +544,25 @@ interface GridNode {
   terminal: boolean;
 }
 
+interface ModifierFamilyTargetGroup {
+  familyId: string;
+  targetIds: string[];
+  adjacentNodeIds: Set<string>;
+}
+
+interface ModifierFamilyResolution {
+  familyByNodeId: Map<string, string>;
+  targetByModifierId: Map<string, string>;
+  pinnedFamilyByModifierId: Map<string, string>;
+}
+
+export interface ModifierFamilyChoice {
+  familyId: string;
+  targetId: string;
+  /** Every currently valid raw dependency target that resolves to this family. */
+  targetIds: string[];
+}
+
 function nodesTouch(left: GridNode, right: GridNode): boolean {
   return left.cells.some((a) =>
     right.cells.some((b) => Math.abs(a.row - b.row) + Math.abs(a.column - b.column) === 1),
@@ -535,89 +592,166 @@ function buildGridNodes(index: CatalogueIndex, state: BuildState): GridNode[] {
   return nodes;
 }
 
-function connectedNodeIds(nodes: GridNode[], sourceId: string): Set<string> {
+function adjacentNodeIds(nodes: GridNode[], sourceId: string): Set<string> {
   const source = nodes.find((node) => node.id === sourceId);
   if (!source) return new Set();
-  const connected = new Set([source.id]);
-  const queue = [source];
-  while (queue.length) {
-    const current = queue.shift()!;
-    for (const candidate of nodes) {
-      if (!connected.has(candidate.id) && nodesTouch(current, candidate)) {
-        connected.add(candidate.id);
-        queue.push(candidate);
-      }
-    }
-  }
-  return connected;
-}
-
-function targetChainReachesTerminal(
-  nodes: GridNode[],
-  state: BuildState,
-  candidateId: string,
-  blockedId: string,
-  visiting = new Set<string>(),
-): boolean {
-  if (candidateId === blockedId || visiting.has(candidateId)) return false;
-  const node = nodes.find((entry) => entry.id === candidateId);
-  if (!node) return false;
-  if (node.terminal) return true;
-  const nextTargetId = state.perks.find((placement) => placement.perkId === candidateId)?.targetId;
-  if (!nextTargetId) return false;
-  return targetChainReachesTerminal(
-    nodes,
-    state,
-    nextTargetId,
-    blockedId,
-    new Set(visiting).add(candidateId),
+  return new Set(
+    nodes
+      .filter((candidate) => candidate.id !== source.id && nodesTouch(source, candidate))
+      .map((candidate) => candidate.id),
   );
 }
 
-export function resolveModifierTargets(index: CatalogueIndex, state: BuildState): BuildState {
-  const nodes = buildGridNodes(index, state);
-  const placementsById = new Map(state.perks.map((placement) => [placement.perkId, placement]));
-  const resolved = new Map<string, string>();
+function modifierFamilyTargetGroups(
+  index: CatalogueIndex,
+  nodes: GridNode[],
+  familyByNodeId: ReadonlyMap<string, string>,
+  perkId: string,
+): ModifierFamilyTargetGroup[] {
+  const perk = index.byId.get(perkId);
+  if (!perk || perk.kind !== "perk" || perk.perkType !== "modifier") return [];
 
-  const resolveTarget = (perkId: string, visiting: Set<string>): string | undefined => {
-    if (resolved.has(perkId)) return resolved.get(perkId);
-    if (visiting.has(perkId)) return undefined;
-    const perk = index.byId.get(perkId);
-    if (!perk || perk.kind !== "perk" || perk.perkType !== "modifier") return undefined;
-    const component = connectedNodeIds(nodes, perkId);
-    const candidateIds = perk.dependencies?.targetSelection?.candidateIds ??
-      perk.dependencies?.possibleTargetPerkIds ?? [];
-    const available = candidateIds.filter((candidateId) => component.has(candidateId));
-    const selectedTarget = placementsById.get(perkId)?.targetId;
-    const ordered = selectedTarget && available.includes(selectedTarget)
-      ? [selectedTarget, ...available.filter((candidateId) => candidateId !== selectedTarget)]
-      : available;
+  const adjacentIds = adjacentNodeIds(nodes, perkId);
+  const exposedFamilyIds = new Set(
+    [...adjacentIds]
+      .map((nodeId) => familyByNodeId.get(nodeId))
+      .filter((familyId): familyId is string => Boolean(familyId)),
+  );
+  if (!exposedFamilyIds.size) return [];
 
-    const nextVisiting = new Set(visiting).add(perkId);
-    for (const candidateId of ordered) {
-      const candidateNode = nodes.find((node) => node.id === candidateId);
-      if (candidateNode?.terminal) {
-        resolved.set(perkId, candidateId);
-        return candidateId;
-      }
-      if (resolveTarget(candidateId, nextVisiting)) {
-        resolved.set(perkId, candidateId);
-        return candidateId;
-      }
+  const groups = new Map<string, ModifierFamilyTargetGroup>();
+  for (const targetId of (
+    perk.dependencies?.targetSelection?.candidateIds ??
+    perk.dependencies?.possibleTargetPerkIds ?? []
+  )) {
+    if (targetId === perkId) continue;
+    const familyId = familyByNodeId.get(targetId);
+    if (!familyId || !exposedFamilyIds.has(familyId)) continue;
+    const existing = groups.get(familyId);
+    if (existing) {
+      existing.targetIds.push(targetId);
+    } else {
+      groups.set(familyId, {
+        familyId,
+        targetIds: [targetId],
+        adjacentNodeIds: adjacentIds,
+      });
     }
-    return undefined;
-  };
+  }
+  return [...groups.values()];
+}
 
+function preferredTargetId(group: ModifierFamilyTargetGroup): string {
+  if (group.targetIds.includes(group.familyId)) return group.familyId;
+  return group.targetIds.find((targetId) => group.adjacentNodeIds.has(targetId)) ??
+    group.targetIds[0];
+}
+
+function resolveModifierFamilies(
+  index: CatalogueIndex,
+  state: BuildState,
+  blockedModifierId?: string,
+): ModifierFamilyResolution {
+  const nodes = buildGridNodes(index, state);
+  const familyByNodeId = new Map<string, string>();
+  const targetByModifierId = new Map<string, string>();
+  const pinnedFamilyByModifierId = new Map<string, string>();
+  for (const node of nodes) {
+    if (node.terminal) familyByNodeId.set(node.id, node.id);
+  }
+
+  const unresolved = state.perks.filter((placement) => {
+    const perk = index.byId.get(placement.perkId);
+    return placement.perkId !== blockedModifierId &&
+      perk?.kind === "perk" && perk.perkType === "modifier";
+  });
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const placement of unresolved) {
+      if (familyByNodeId.has(placement.perkId)) continue;
+      const groups = modifierFamilyTargetGroups(
+        index,
+        nodes,
+        familyByNodeId,
+        placement.perkId,
+      );
+      const pinnedGroup = placement.targetFamilyId
+        ? groups.find((group) => group.familyId === placement.targetFamilyId)
+        : undefined;
+      // An explicit family choice is sticky. If that family becomes
+      // disconnected, leave the modifier unresolved instead of silently
+      // reassigning it to another adjacent family.
+      const group = placement.targetFamilyId
+        ? pinnedGroup
+        : (groups.length === 1 ? groups[0] : undefined);
+      if (!group) continue;
+
+      const targetId = placement.targetId && group.targetIds.includes(placement.targetId)
+        ? placement.targetId
+        : preferredTargetId(group);
+      familyByNodeId.set(placement.perkId, group.familyId);
+      targetByModifierId.set(placement.perkId, targetId);
+      // Persist even an unambiguous automatic assignment. Once a modifier has
+      // joined a family it must not silently switch families after a move,
+      // rotation, or neighboring placement changes.
+      pinnedFamilyByModifierId.set(placement.perkId, group.familyId);
+      changed = true;
+    }
+  }
+
+  return { familyByNodeId, targetByModifierId, pinnedFamilyByModifierId };
+}
+
+export function resolveModifierTargets(index: CatalogueIndex, state: BuildState): BuildState {
+  const resolution = resolveModifierFamilies(index, state);
   const perks = state.perks.map((placement) => {
     const perk = index.byId.get(placement.perkId);
     if (!perk || perk.kind !== "perk" || perk.perkType !== "modifier") {
-      const { targetId: _targetId, ...withoutTarget } = placement;
+      const {
+        targetId: _targetId,
+        targetFamilyId: _targetFamilyId,
+        ...withoutTarget
+      } = placement;
       return withoutTarget;
     }
-    const targetId = resolveTarget(perk.id, new Set());
-    return targetId ? { ...placement, targetId } : { ...placement, targetId: undefined };
+    const targetId = resolution.targetByModifierId.get(perk.id);
+    const targetFamilyId = resolution.pinnedFamilyByModifierId.get(perk.id);
+    if (!targetId) {
+      const {
+        targetId: _targetId,
+        ...withoutTargetId
+      } = placement;
+      return withoutTargetId;
+    }
+    return targetFamilyId
+      ? { ...placement, targetId, targetFamilyId }
+      : (() => {
+          const { targetFamilyId: _targetFamilyId, ...withoutPinnedFamily } = placement;
+          return { ...withoutPinnedFamily, targetId };
+        })();
   });
   return { ...state, perks };
+}
+
+export function availableModifierFamilyChoices(
+  index: CatalogueIndex,
+  state: BuildState,
+  perkId: string,
+): ModifierFamilyChoice[] {
+  const nodes = buildGridNodes(index, state);
+  const resolution = resolveModifierFamilies(index, state, perkId);
+  return modifierFamilyTargetGroups(
+    index,
+    nodes,
+    resolution.familyByNodeId,
+    perkId,
+  ).map((group) => ({
+    familyId: group.familyId,
+    targetId: preferredTargetId(group),
+    targetIds: [...group.targetIds],
+  }));
 }
 
 export function availableModifierTargetIds(
@@ -625,16 +759,14 @@ export function availableModifierTargetIds(
   state: BuildState,
   perkId: string,
 ): string[] {
-  const perk = index.byId.get(perkId);
-  if (!perk || perk.kind !== "perk" || perk.perkType !== "modifier") return [];
   const nodes = buildGridNodes(index, state);
-  const component = connectedNodeIds(nodes, perkId);
-  const candidateIds = perk.dependencies?.targetSelection?.candidateIds ??
-    perk.dependencies?.possibleTargetPerkIds ?? [];
-  return candidateIds.filter(
-    (candidateId) => component.has(candidateId) &&
-      targetChainReachesTerminal(nodes, state, candidateId, perkId),
-  );
+  const resolution = resolveModifierFamilies(index, state, perkId);
+  return modifierFamilyTargetGroups(
+    index,
+    nodes,
+    resolution.familyByNodeId,
+    perkId,
+  ).flatMap((group) => group.targetIds);
 }
 
 export function validateGridLinks(index: CatalogueIndex, state: BuildState): GridIssue[] {

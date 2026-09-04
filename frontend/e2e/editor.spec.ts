@@ -46,11 +46,11 @@ test("builds a local kit, perk, weapon, and item loadout", async ({ page }) => {
   ]);
   await expect(page.locator(".kit-card.is-selected .kit-card__copy strong")).toHaveCSS(
     "color",
-    "rgb(217, 123, 38)",
+    "rgb(255, 138, 32)",
   );
   await expect(page.locator(".site-header")).toHaveCSS(
     "border-top-color",
-    "rgba(184, 91, 24, 0.52)",
+    "rgba(255, 134, 28, 0.82)",
   );
 
   const kitRailBox = await page.locator(".kit-section").boundingBox();
@@ -409,6 +409,88 @@ test("hover shortcuts filter, rotate, remove, and reset against game catalogue I
     .toBeCloseTo(boardScrollBeforeUnlinked.height, 0);
   await page.keyboard.press("f");
   await expect(page.locator('.placed-perk[data-link-status="unlinked"]')).toHaveCount(0);
+});
+
+test("Marauder modifiers choose one family and cannot bridge into another", async ({ page }) => {
+  const titanRocketsId =
+    "/Game/Blueprints/Avocado_Classes/Demolisher/Perks/TitanRockets/Perk_Demolisher_TitanRockets_Base_Ultimate";
+  const blastCannonId =
+    "/Game/Blueprints/Avocado_Classes/Demolisher/Perks/BlastCannon/Perk_Demolisher_BlastCannon_Base_Tactical";
+
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.getByRole("radio", { name: /Marauder/ }).click();
+
+  await expect(page.locator(".ability-anchor--primary"))
+    .toHaveAttribute("aria-label", /Titan Rockets/);
+  await expect(page.locator(".ability-anchor--secondary"))
+    .toHaveAttribute("aria-label", /Blast Cannon/);
+
+  const perkSearch = page.getByRole("searchbox", { name: /Search \d+ perks/ });
+  const placeBiggerAndBetter = async (familyName: "Titan Rockets" | "Blast Cannon") => {
+    await perkSearch.fill("Bigger & Better");
+    await page.locator(".perk-list-item").filter({
+      has: page.getByText("Bigger & Better", { exact: true }),
+    }).click();
+    await page.locator(".perk-cell[data-row='0'][data-column='4']").click();
+
+    const chooser = page.getByRole("dialog", {
+      name: /Choose a family for Bigger & Better/i,
+    });
+    await expect(chooser).toBeVisible();
+    await expect(chooser.getByRole("button", { name: /Titan Rockets/i })).toBeVisible();
+    await expect(chooser.getByRole("button", { name: /Blast Cannon/i })).toBeVisible();
+    await expect(chooser.locator(".modifier-family-option strong"))
+      .toHaveText(["Titan Rockets", "Blast Cannon"]);
+    await chooser.getByRole("button", { name: new RegExp(familyName, "i") }).click();
+    await expect(chooser).toHaveCount(0);
+  };
+
+  await placeBiggerAndBetter("Titan Rockets");
+  await expect(page.getByRole("button", { name: /^Bigger & Better, 10×1, at A1/ }))
+    .toHaveAttribute("data-link-status", "linked");
+  await expect(page.locator(`.family-connector[data-family-id="${titanRocketsId}"]`))
+    .toHaveCount(1);
+  await expect(page.locator(`.family-connector[data-family-id="${blastCannonId}"]`))
+    .toHaveCount(0);
+  await expect.poll(() => page.evaluate((perkId) => {
+    const raw = localStorage.getItem("afe2-build-editor:local-build:v1");
+    if (!raw) return null;
+    const build = JSON.parse(raw) as {
+      perks?: Array<{ perkId?: string; targetFamilyId?: string }>;
+    };
+    return build.perks?.find((perk) => perk.perkId === perkId)?.targetFamilyId ?? null;
+  }, "/Game/Blueprints/Avocado_Classes/Demolisher/Perks/PerksOld/Perk_Demolisher_BiggerNBetter_Core"))
+    .toBe(titanRocketsId);
+
+  await perkSearch.fill("Larger Payload");
+  await page.locator(".perk-list-item").filter({
+    has: page.getByText("Larger Payload", { exact: true }),
+  }).click();
+  await page.locator(".perk-cell[data-row='1'][data-column='4']").click();
+  await expect(page.getByRole("button", { name: /^Larger Payload, 2×1, at/ }))
+    .toHaveAttribute("data-link-status", "linked");
+  await expect(page.locator(`.family-connector[data-family-id="${titanRocketsId}"]`))
+    .toHaveCount(3);
+  await expect(page.locator(`.family-connector[data-family-id="${blastCannonId}"]`))
+    .toHaveCount(0);
+
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await placeBiggerAndBetter("Blast Cannon");
+  await perkSearch.fill("Larger Payload");
+  await page.locator(".perk-list-item").filter({
+    has: page.getByText("Larger Payload", { exact: true }),
+  }).click();
+  await page.locator(".perk-cell[data-row='1'][data-column='4']").click();
+
+  await expect(page.getByRole("button", {
+    name: /^Larger Payload, 2×1, at .+, connection required/,
+  })).toHaveAttribute("data-link-status", "unlinked");
+  await expect(page.locator(`.family-connector[data-family-id="${blastCannonId}"]`))
+    .toHaveCount(1);
+  await expect(page.locator(`.family-connector[data-family-id="${titanRocketsId}"]`))
+    .toHaveCount(0);
 });
 
 test("Specialist ability slots start empty and clear or F returns kit defaults", async ({ page }) => {

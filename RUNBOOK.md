@@ -161,6 +161,52 @@ jq -r '.records[] | select(.kind == "weapon") | .displayName' \
   .local/catalogue/planner-catalogue.json | sort
 ```
 
+Show the text the editor receives for a component mod, trait, or augment (this
+example uses Priming Chamber):
+
+```bash
+jq '.records[]
+  | select(.kind == "mod" and .displayName == "Priming Chamber")
+  | {displayName, description, staticStatLines, conditionalDescriptions}' \
+  .local/catalogue/planner-catalogue.json
+```
+
+`description` is the ready-to-render picker text. `staticStatLines` exposes the
+same rows in a structured form for styling or inspection; their values have
+already been interpreted and formatted by the extractor. The frontend should
+not calculate attachment stats. Low-level effect definitions and mechanical
+operations live only in the diagnostic evidence files, not in the planner
+catalogue.
+
+Inspect one weapon-specific augment implementation, including its authored
+panel regions and generated stat rows:
+
+```bash
+jq '.records[]
+  | select(.kind == "augment" and .displayName == "High Explosive Rounds")
+  | {id, compatibleWeaponIds, description, descriptionPanel,
+     staticStatLines, conditionalDescriptions}' \
+  .local/catalogue/planner-catalogue.json
+```
+
+Repeated names are expected here: each row is the implementation for a
+particular weapon family, and its values can differ. The selected weapon's
+augment slot already references only the compatible implementation IDs.
+The composed `description` puts one generated stat on each line. Triggered
+rows appear beneath their trigger with a two-space indent, and generated signs
+are compact, for example `+20.0%` or `-75%`.
+
+Confirm that every selectable attachment has picker copy (a clean run prints
+nothing):
+
+```bash
+jq -r '.records[]
+  | select(.kind == "mod" or .kind == "trait" or .kind == "augment")
+  | select((.description // "") == "")
+  | [.kind, .displayName] | @tsv' \
+  .local/catalogue/planner-catalogue.json
+```
+
 Summarize changes from the previous extraction:
 
 ```bash

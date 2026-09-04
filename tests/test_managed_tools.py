@@ -413,6 +413,7 @@ class ManagedToolCliTests(unittest.TestCase):
 
         self.assertTrue(
             {
+                "attachment_descriptions.py",
                 "collection.py",
                 "planner_catalogue.py",
                 "weapon_compatibility.py",

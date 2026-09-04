@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Sequence
 
+from .attachment_descriptions import project_attachment_description
 from .collection import (
     CollectionFormatError,
     build_collection_document,
@@ -55,14 +56,17 @@ _ABILITY_ROLE_NAMES = {
     "Tactical": "secondary",
     "Ultimate": "primary",
 }
+_MOD_CHIP_RESTRICTION_NAMES = {
+    "Kit": "kit",
+    "None": "none",
+    "Role": "role",
+}
 _GRID_ROTATIONS = ("Default", "Clockwise90", "Clockwise180", "Clockwise270")
-_MONDO_WEAPON = "/Game/Blueprints/Venus_Weapons/Guns/Rifles/Venus_Rifle_Auto_HerkMondo"
-_MONDO_TRAIT = "/Game/Blueprints/Venus_Weapons/Perks/Mastery/Avo_GunPerk_HerkMondo"
-_MONDO_PLACEHOLDER_ICON = "/Game/UI/Textures/Avo_Weapons/Icon_Venus_Rifle_Auto_Kramer"
 _COLLECTION_STORE = "/Game/Blueprints/Stores/Store_MainHub_Credits"
 _PROGRESSION_SETTINGS = "/Game/Design/Rewards/RewardTable_Settings_V1"
 _DEFAULT_STARTING_REWARDS = "/Game/Design/Rewards/DefaultStarting_Rewards"
 _DEFAULT_PLAYER_CHARACTER = "/Game/Blueprints/Character/DefaultPlayerCharacter"
+_ATTRIBUTE_METADATA = "/Game/Design/AttributeMetaData/AttributeMetaData"
 _PLAYER_ITEM_INVENTORY_TAGS = {
     "Ability.Consumable.InventoryType.Major": "major",
     "Ability.Consumable.InventoryType.Minor": "minor",
@@ -1055,6 +1059,75 @@ def _chip_visual_family(
     return {"status": "inheritance-pending"}
 
 
+def _perk_visual_classification(
+    *,
+    export_name: str,
+    parent_class_path: str | None,
+    raw_restriction_type: str | None,
+    raw_role_restriction: str | None,
+    role_restriction_export_name: str,
+) -> dict[str, Any]:
+    """Normalize the enum that selects the placed perk-chip colour family."""
+
+    restriction_name = _enum_tail(raw_restriction_type)
+    restriction_type = _MOD_CHIP_RESTRICTION_NAMES.get(restriction_name or "")
+    if raw_restriction_type:
+        classification: dict[str, Any] = {
+            "evidence": {
+                "property": f"{export_name}.RestrictionType",
+                "source": "serialized-enum",
+                "valueRaw": raw_restriction_type,
+            },
+            "restrictionTypeRaw": raw_restriction_type,
+        }
+        if restriction_type:
+            classification.update(
+                {
+                    "restrictionType": restriction_type,
+                    "status": "resolved",
+                }
+            )
+        else:
+            classification.update(
+                {
+                    "reason": "serialized RestrictionType is not a known mod-chip restriction",
+                    "status": "unresolved-restriction-type",
+                }
+            )
+    elif (
+        isinstance(parent_class_path, str)
+        and parent_class_path.rsplit(".", 1)[-1] == "ModChipDef"
+    ):
+        classification = {
+            "evidence": {
+                "parentClassPath": parent_class_path,
+                "reason": (
+                    "RestrictionType is omitted on a direct native ModChipDef subclass; "
+                    "the zero-valued native enum default is None"
+                ),
+                "source": "native-default-inferred",
+            },
+            "restrictionType": "none",
+            "status": "inferred",
+        }
+    else:
+        classification = {
+            "evidence": {
+                "parentClassPath": parent_class_path,
+                "source": "native-or-unresolved-parent",
+            },
+            "reason": "RestrictionType was not materialized from a proven perk parent",
+            "status": "unresolved-restriction-type",
+        }
+
+    if raw_role_restriction:
+        classification["roleRestrictionRaw"] = raw_role_restriction
+        classification["evidence"]["roleRestrictionProperty"] = (
+            f"{role_restriction_export_name}.RoleRestriction"
+        )
+    return classification
+
+
 def _resolve_chip_visual_families(records: Sequence[dict[str, Any]]) -> None:
     """Resolve inherited chip families, failing open on missing/cyclic parents."""
 
@@ -1419,6 +1492,23 @@ def _candidate_semantics(
         record["description"] = description
         record["descriptionEvidence"] = f"{export.get('objectName')}.{description_property}"
 
+    # Gun-mod widgets consume these independently from Description.  In
+    # particular, shipped augment implementations commonly have an explicitly
+    # empty Description while retaining player-facing copy in DescriptionShort.
+    # Keep an authored empty FText as JSON null so downstream projections can
+    # distinguish it from a missing property without borrowing copy from a
+    # Collection reward-pack wrapper.
+    for property_name, field_name in (
+        ("DescriptionShort", "descriptionShort"),
+        ("FlavorText", "flavorText"),
+    ):
+        text_property, _, text_export = field_context(property_name)
+        text_value = _text(text_property)
+        if text_value is _MISSING:
+            continue
+        record[field_name] = text_value
+        record[f"{field_name}Evidence"] = f"{text_export}.{property_name}"
+
     conditional_property, conditional_asset, conditional_export = field_context(
         "ConditionalModDescriptions"
     )
@@ -1465,6 +1555,19 @@ def _candidate_semantics(
                     record["parentPackagePath"] = parent
                 elif parent.startswith("/Script/"):
                     record["parentClassPath"] = parent
+
+    if candidate.get("kind") == "perk":
+        restriction_property, _, restriction_export = field_context("RestrictionType")
+        role_restriction_property, _, role_restriction_export = field_context(
+            "RoleRestriction"
+        )
+        record["visualClassification"] = _perk_visual_classification(
+            export_name=restriction_export,
+            parent_class_path=record.get("parentClassPath"),
+            raw_restriction_type=_enum(restriction_property),
+            raw_role_restriction=_enum(role_restriction_property),
+            role_restriction_export_name=role_restriction_export,
+        )
 
     icon_references: list[tuple[str, str]] = []
     silhouette_references: list[tuple[str, str]] = []
@@ -1542,6 +1645,33 @@ def _effect_definition(asset: Mapping[str, Any]) -> dict[str, Any]:
     if raw_duration:
         definition["durationPolicyRaw"] = raw_duration
         definition["durationPolicy"] = (_enum_tail(raw_duration) or "").casefold()
+    exports = asset.get("exports")
+    raw_ui_data_index = (fields.get("UIData") or {}).get("Value")
+    override_export: Mapping[str, Any] | None = None
+    if type(raw_ui_data_index) is int and raw_ui_data_index > 0:
+        export_index = raw_ui_data_index - 1
+        if not isinstance(exports, list) or export_index >= len(exports):
+            raise CatalogueError("gameplay effect UIData referenced an invalid export")
+        referenced_ui_data = exports[export_index]
+        if (
+            isinstance(referenced_ui_data, Mapping)
+            and str(referenced_ui_data.get("objectName", "")).startswith(
+                "CoreGameplayEffect_OverrideComparisonStat_"
+            )
+        ):
+            override_export = referenced_ui_data
+    if override_export is not None:
+        override_fields = _property_map(override_export.get("data"))
+        override_tags = _gameplay_tags(
+            override_fields.get("OverrideDisplayStatTag")
+        )
+        if len(override_tags) != 1:
+            raise CatalogueError("gameplay effect comparison-stat override was malformed")
+        definition["overrideDisplayStatTag"] = override_tags[0]
+        definition["overrideDisplayStatTagEvidence"] = (
+            f"{export.get('objectName')}.UIData -> "
+            f"{override_export.get('objectName')}.OverrideDisplayStatTag"
+        )
     modifiers: list[dict[str, Any]] = []
     modifier_property = fields.get("Modifiers")
     for index, entry in enumerate(_properties((modifier_property or {}).get("Value"))):
@@ -1558,6 +1688,17 @@ def _effect_definition(asset: Mapping[str, Any]) -> dict[str, Any]:
         }
         if isinstance(attribute, str):
             modifier["attribute"] = attribute
+            field_path = (attribute_fields.get("Attribute") or {}).get("Value")
+            resolved_owner = (
+                field_path.get("ResolvedOwner")
+                if isinstance(field_path, Mapping)
+                else None
+            )
+            owner_identity = _import_parent_identity(asset, resolved_owner)
+            if isinstance(owner_identity, str):
+                owner_name = owner_identity.rsplit(".", 1)[-1]
+                modifier["attributeOwner"] = owner_name
+                modifier["qualifiedAttribute"] = f"{owner_name}.{attribute}"
         if raw_operation:
             modifier["operationRaw"] = raw_operation
             tail = _enum_tail(raw_operation)
@@ -1568,10 +1709,101 @@ def _effect_definition(asset: Mapping[str, Any]) -> dict[str, Any]:
             modifier["magnitudeCalculationType"] = (
                 _enum_tail(raw_calculation) or ""
             ).casefold()
+        if modifier.get("magnitudeCalculationType") == "scalablefloat":
+            scalable_fields = _property_map(
+                (magnitude_fields.get("ScalableFloatMagnitude") or {}).get("Value")
+            )
+            scalable_value = _finite_number(
+                (scalable_fields.get("Value") or {}).get("Value")
+            )
+            if scalable_value is not None:
+                scalable: dict[str, Any] = {
+                    "value": float(f"{float(scalable_value):.7g}"),
+                }
+                curve_fields = _property_map(
+                    (scalable_fields.get("Curve") or {}).get("Value")
+                )
+                curve_table_index = (curve_fields.get("CurveTable") or {}).get("Value")
+                curve_table_package = _import_package(asset, curve_table_index)
+                raw_curve_row_name = (curve_fields.get("RowName") or {}).get("Value")
+                curve_row_name = (
+                    raw_curve_row_name
+                    if isinstance(raw_curve_row_name, str)
+                    and raw_curve_row_name
+                    and raw_curve_row_name != "None"
+                    else None
+                )
+                if bool(curve_table_package) != bool(curve_row_name):
+                    raise CatalogueError(
+                        "scalable-float modifier had an incomplete curve-table handle"
+                    )
+                scalable["curveTablePackagePath"] = curve_table_package
+                scalable["curveRowName"] = curve_row_name
+                modifier["scalableFloatMagnitude"] = scalable
         modifiers.append(modifier)
     definition["modifiers"] = modifiers
     definition["status"] = "parsed"
     return definition
+
+
+def _attribute_metadata_document(asset: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize the game's canonical comparable-attribute UI DataTable."""
+
+    exports = asset.get("exports")
+    export = next(
+        (
+            item
+            for item in exports
+            if isinstance(item, Mapping) and item.get("objectName") == "AttributeMetaData"
+        ),
+        None,
+    ) if isinstance(exports, list) else None
+    table = export.get("table") if isinstance(export, Mapping) else None
+    raw_rows = table.get("Data") if isinstance(table, Mapping) else None
+    if not isinstance(raw_rows, list) or not raw_rows:
+        raise CatalogueError("canonical attribute metadata table had no cooked rows")
+
+    rows: list[dict[str, Any]] = []
+    seen_attributes: set[str] = set()
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            raise CatalogueError("canonical attribute metadata contained a malformed row")
+        fields = _property_map(raw_row.get("Value"))
+        attribute = (fields.get("AttributeName") or {}).get("Value")
+        display_name = _text(fields.get("AttributeDisplayName"))
+        display_type = _enum_tail(_enum(fields.get("DisplayType")))
+        modifier_operation = _enum_tail(_enum(fields.get("ModOp")))
+        result = _enum_tail(_enum(fields.get("Sign")))
+        sort_order = (fields.get("SortOrder") or {}).get("Value")
+        if (
+            not isinstance(attribute, str)
+            or not attribute
+            or attribute in seen_attributes
+            or not isinstance(display_name, str)
+            or not display_name.strip()
+            or not isinstance(display_type, str)
+            or not isinstance(modifier_operation, str)
+            or result not in {"HigherIsBetter", "LowerIsBetter"}
+            or type(sort_order) is not int
+        ):
+            raise CatalogueError("canonical attribute metadata contained an invalid row")
+        seen_attributes.add(attribute)
+        rows.append(
+            {
+                "attribute": attribute,
+                "displayName": display_name,
+                "displayType": display_type,
+                "modifierOperation": modifier_operation,
+                "result": result,
+                "sortOrder": sort_order,
+            }
+        )
+    rows.sort(key=lambda row: (row["sortOrder"], row["attribute"]))
+    return {
+        "packagePath": _ATTRIBUTE_METADATA,
+        "rows": rows,
+        "status": "parsed",
+    }
 
 
 def _icon_output_name(package_path: str) -> str:
@@ -1629,38 +1861,6 @@ def _mechanical_stats(
             }
         stats.append(stat)
     return stats
-
-
-def _apply_icon_fallbacks(records: Sequence[dict[str, Any]]) -> None:
-    """Apply reviewed fallbacks for shipped records whose primary art is wrong."""
-
-    by_id = {
-        record.get("id"): record
-        for record in records
-        if isinstance(record.get("id"), str)
-    }
-    weapon = by_id.get(_MONDO_WEAPON)
-    trait = by_id.get(_MONDO_TRAIT)
-    if not isinstance(weapon, dict) or not isinstance(trait, dict):
-        return
-    trait_icon = trait.get("icon")
-    if not isinstance(trait_icon, dict) or not isinstance(trait_icon.get("packagePath"), str):
-        return
-    serialized = weapon.get("icon")
-    if (
-        not isinstance(serialized, dict)
-        or serialized.get("packagePath") != _MONDO_PLACEHOLDER_ICON
-    ):
-        return
-    weapon["serializedIcon"] = copy.deepcopy(serialized)
-    fallback = copy.deepcopy(trait_icon)
-    fallback["fallback"] = {
-        "reason": "serialized Mondo weapon icon is generic Kramer artwork",
-        "sourceRecordId": _MONDO_TRAIT,
-        "type": "trait-icon",
-    }
-    fallback["referenceEvidence"] = f"fallback:{_MONDO_TRAIT}.Icon"
-    weapon["icon"] = fallback
 
 
 def _provided_tag_matches_accepted(provided: str, accepted: str) -> bool:
@@ -2454,6 +2654,7 @@ def normalize_semantic_document(
     icon_bytes: Mapping[str, bytes],
     source_fingerprint: str,
     class_assets: Sequence[Mapping[str, Any]] = (),
+    attribute_metadata_assets: Sequence[Mapping[str, Any]] = (),
     item_slot_assets: Sequence[Mapping[str, Any]] = (),
     parent_assets: Sequence[Mapping[str, Any]] = (),
     resolve_weapon_compatibility: bool = False,
@@ -2499,7 +2700,6 @@ def normalize_semantic_document(
         )
 
     _resolve_chip_visual_families(records)
-    _apply_icon_fallbacks(records)
     kit_abilities, relationship_coverage = _enrich_record_relationships(records)
     class_coverage = _enrich_kit_class_data(
         records,
@@ -2543,6 +2743,18 @@ def normalize_semantic_document(
         for item in effect_assets
         if isinstance(item, Mapping) and isinstance(item.get("packagePath"), str)
     }
+    matching_attribute_metadata = [
+        item
+        for item in attribute_metadata_assets
+        if isinstance(item, Mapping) and item.get("packagePath") == _ATTRIBUTE_METADATA
+    ]
+    if len(matching_attribute_metadata) > 1:
+        raise CatalogueError("canonical attribute metadata asset was duplicated")
+    attribute_metadata = (
+        _attribute_metadata_document(matching_attribute_metadata[0])
+        if matching_attribute_metadata
+        else None
+    )
     metadata_by_package = {
         item["packagePath"]: item
         for item in icon_metadata
@@ -2557,6 +2769,8 @@ def normalize_semantic_document(
     records_with_conditional_descriptions = 0
     records_with_icon = 0
     records_with_silhouette_icon = 0
+    records_with_static_stat_lines = 0
+    static_stat_line_count = 0
     records_with_stats = 0
     perk_visual_families_inferred = 0
     perk_visual_families_resolved = 0
@@ -2600,6 +2814,18 @@ def normalize_semantic_document(
             record["stats"] = stats
             stat_count += len(stats)
             records_with_stats += 1
+        if (
+            record.get("kind") in {"augment", "mod", "trait"}
+            and attribute_metadata is not None
+        ):
+            _, static_stat_lines = project_attachment_description(
+                record,
+                attribute_metadata=attribute_metadata,
+            )
+            if static_stat_lines:
+                record["staticStatLines"] = static_stat_lines
+                records_with_static_stat_lines += 1
+                static_stat_line_count += len(static_stat_lines)
 
         for field in ("icon", "silhouetteIcon"):
             icon = record.get(field)
@@ -2654,6 +2880,9 @@ def normalize_semantic_document(
             "iconsReferenced": len(icon_references),
             "iconsUnresolved": len(icon_references - decoded_icon_packages),
             "itemSlotSourceAssetsParsed": int(default_player_asset is not None),
+            "attributeMetadataRows": (
+                len(attribute_metadata["rows"]) if attribute_metadata is not None else 0
+            ),
             "itemSlots": len(item_slots),
             "mechanicalStats": stat_count,
             "mechanicsEffectLinks": effect_link_count,
@@ -2667,6 +2896,8 @@ def normalize_semantic_document(
             "recordsWithIcon": records_with_icon,
             "recordsWithMechanicalStats": records_with_stats,
             "recordsWithSilhouetteIcon": records_with_silhouette_icon,
+            "recordsWithStaticStatLines": records_with_static_stat_lines,
+            "staticStatLines": static_stat_line_count,
             **relationship_coverage,
             **class_coverage,
             **compatibility_coverage,
@@ -2681,6 +2912,8 @@ def normalize_semantic_document(
         "selectionBasis": "archive-candidates",
         "sourceFingerprint": source_fingerprint,
     }
+    if attribute_metadata is not None:
+        document["attributeMetadata"] = attribute_metadata
     if compatibility_diagnostics is not None:
         document["weaponCompatibilityDiagnostics"] = compatibility_diagnostics
     return SemanticBuild(document=document, binary_files=dict(sorted(binaries.items())))
@@ -2710,6 +2943,8 @@ def apply_semantic_evidence(
         "displayName",
         "dependencies",
         "description",
+        "descriptionShort",
+        "flavorText",
         "grid",
         "implementationForAbilityIds",
         "itemTier",
@@ -2721,12 +2956,15 @@ def apply_semantic_evidence(
         "perkType",
         "compatibility",
         "icon",
-        "serializedIcon",
         "silhouetteIcon",
         "effects",
         "stats",
+        "staticStatLines",
+        "visualClassification",
         "weaponSlots",
     )
+    if "attributeMetadata" in semantic:
+        candidates["attributeMetadata"] = copy.deepcopy(semantic["attributeMetadata"])
     for candidate in candidates.get("records", []):
         if not isinstance(candidate, dict):
             continue
@@ -3614,6 +3852,7 @@ def build_semantic_assets(
         ]
         effect_requests: list[dict[str, str]] = []
         class_requests: list[dict[str, str]] = []
+        attribute_metadata_requests: list[dict[str, str]] = []
         item_slot_requests: list[dict[str, str]] = []
         icon_requests: list[dict[str, str]] = []
         dependency_members: set[str] = set()
@@ -3661,6 +3900,17 @@ def build_semantic_assets(
                     "stage": "item-slot-index",
                 }
             )
+        attribute_metadata_member = members.get(_ATTRIBUTE_METADATA)
+        if attribute_metadata_member:
+            attribute_metadata_requests.append(
+                {
+                    "memberPath": attribute_metadata_member,
+                    "packagePath": _ATTRIBUTE_METADATA,
+                }
+            )
+            dependency_members.add(attribute_metadata_member)
+        else:
+            raise CatalogueError("archive contained no canonical attribute metadata table")
         for package in icon_packages:
             member = members.get(package)
             if member:
@@ -3691,7 +3941,12 @@ def build_semantic_assets(
         second, icons_root = _run_reader(
             reader,
             request={
-                "assets": [*effect_requests, *class_requests, *item_slot_requests],
+                "assets": [
+                    *effect_requests,
+                    *class_requests,
+                    *item_slot_requests,
+                    *attribute_metadata_requests,
+                ],
                 "icons": icon_requests,
                 "schemaVersion": 1,
             },
@@ -3869,6 +4124,12 @@ def build_semantic_assets(
             icon_bytes=icon_payloads,
             source_fingerprint=source_fingerprint,
             class_assets=class_assets,
+            attribute_metadata_assets=[
+                item
+                for item in second.get("assets", [])
+                if isinstance(item, dict)
+                and item.get("packagePath") == _ATTRIBUTE_METADATA
+            ],
             item_slot_assets=[
                 item
                 for item in second.get("assets", [])

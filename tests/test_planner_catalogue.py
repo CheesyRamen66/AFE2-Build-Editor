@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from afe2_catalogue.errors import CatalogueError  # noqa: E402
 from afe2_catalogue.planner_catalogue import (  # noqa: E402
+    _project_augment_description,
     _project_kit_weapon_slots,
     build_planner_catalogue,
 )
@@ -30,6 +31,53 @@ def shape(width: int, height: int) -> dict[str, object]:
 
 
 class PlannerCatalogueTests(unittest.TestCase):
+    def test_augment_description_includes_authored_static_and_conditional_sections(
+        self,
+    ) -> None:
+        source = {
+            "conditionalDescriptions": [
+                {
+                    "conditionText": None,
+                    "statLines": [
+                        {
+                            "displayType": "Integer",
+                            "result": "HigherIsBetter",
+                            "statText": "Explosion Radius",
+                            "statValue": 150.0,
+                        }
+                    ],
+                }
+            ],
+            "description": None,
+            "descriptionShort": "Explosives detonate on impact.",
+            "flavorText": None,
+            "kind": "augment",
+            "staticStatLines": [
+                {
+                    "displayText": "+10.0% Magazine Capacity",
+                }
+            ],
+        }
+
+        description, panel = _project_augment_description(source)
+
+        self.assertEqual(
+            description,
+            (
+                "Explosives detonate on impact.\r\n\r\n"
+                "+10.0% Magazine Capacity\r\n\r\n"
+                "+150 Explosion Radius"
+            ),
+        )
+        self.assertEqual(
+            panel,
+            {
+                "description": None,
+                "descriptionSecondary": None,
+                "descriptionUpper": "Explosives detonate on impact.",
+            },
+        )
+
     def test_projects_fully_unlocked_kit_weapon_picker_semantics(self) -> None:
         def weapon(
             *,
@@ -272,6 +320,16 @@ class PlannerCatalogueTests(unittest.TestCase):
                     "kitEligibility": {"restrictedKitId": "kit:one"},
                     "packagePath": core,
                     "stats": ["out of scope"],
+                    "visualClassification": {
+                        "evidence": {
+                            "property": "Default__Rampage_C.RestrictionType",
+                            "source": "serialized-enum",
+                            "valueRaw": "EModChipRestrictionType::Kit",
+                        },
+                        "restrictionType": "kit",
+                        "restrictionTypeRaw": "EModChipRestrictionType::Kit",
+                        "status": "resolved",
+                    },
                 },
                 {
                     "dependencies": {
@@ -396,7 +454,11 @@ class PlannerCatalogueTests(unittest.TestCase):
                         "compatibleWeaponIds": ["weapon:visible", "weapon:latent"],
                         "status": "resolved",
                     },
+                    "description": None,
+                    "descriptionShort": "Rifle-specific payload summary.",
                     "displayName": "Rifle-specific payload",
+                    "flavorText": "Rifle-specific payload flavor text.",
+                    "icon": {"path": "icons/rifle-specific-payload.png"},
                     "id": "augment:rifle-variant",
                     "kind": "augment",
                     "packagePath": "augment:rifle-variant",
@@ -421,6 +483,20 @@ class PlannerCatalogueTests(unittest.TestCase):
             for record in semantic["records"]
             if record["id"] == "mod:magazine"
         )
+        magazine["description"] = None
+        magazine["staticStatLines"] = [
+            {
+                "attribute": "GunGameplayAttributes.TimeToReload",
+                "displayText": "+20.0% Reload Speed",
+                "displayType": "Percent",
+                "displayValue": "+20.0%",
+                "effectPackagePath": "effect:reload-speed",
+                "result": "HigherIsBetter",
+                "sortOrder": 13,
+                "statText": "Reload Speed",
+                "statValue": 20.0,
+            }
+        ]
         magazine["conditionalDescriptions"] = [
             {
                 "conditionText": "<Bold>On Reload</>:",
@@ -504,10 +580,29 @@ class PlannerCatalogueTests(unittest.TestCase):
             },
             "sourceFingerprint": fingerprint,
         }
+        perk_color_palette = {
+            "colors": [
+                {
+                    "index": 0,
+                    "linearRgba": {"a": 1.0, "b": 0.2, "g": 0.6, "r": 0.5},
+                    "srgbHex": "#bcd079ff",
+                },
+                {
+                    "index": 1,
+                    "linearRgba": {"a": 1.0, "b": 0.6, "g": 0.7, "r": 0.3},
+                    "srgbHex": "#95dacbff",
+                },
+            ],
+            "indexRule": "index modulo 2",
+            "sourceFunction": "ReturnPerkColor",
+            "sourcePackagePath": "/Game/UI/Blueprints/WB_UI_Colors_Functions",
+            "status": "parsed",
+        }
         grid = {
             "layoutMetrics": {
                 "board": {"columns": 10, "rows": 5, "status": "parsed"}
             },
+            "perkColorPalette": perk_color_palette,
             "sourceFingerprint": fingerprint,
             "textures": [
                 {
@@ -555,6 +650,15 @@ class PlannerCatalogueTests(unittest.TestCase):
                     "sha256": "sha256:" + "5" * 64,
                     "variant": "default",
                 },
+                {
+                    "family": None,
+                    "footprint": None,
+                    "packagePath": "texture:connector-ghost",
+                    "path": "grid-assets/textures/connector-ghost.png",
+                    "role": "connector",
+                    "sha256": "sha256:" + "6" * 64,
+                    "variant": "ghost",
+                },
             ],
         }
         for texture in grid["textures"]:
@@ -600,6 +704,19 @@ class PlannerCatalogueTests(unittest.TestCase):
         self.assertEqual(records[core]["displayName"], "Rampage")
         self.assertEqual(records[core]["perkType"], "core")
         self.assertEqual(
+            records[core]["visualClassification"],
+            {
+                "evidence": {
+                    "property": "Default__Rampage_C.RestrictionType",
+                    "source": "serialized-enum",
+                    "valueRaw": "EModChipRestrictionType::Kit",
+                },
+                "restrictionType": "kit",
+                "restrictionTypeRaw": "EModChipRestrictionType::Kit",
+                "status": "resolved",
+            },
+        )
+        self.assertEqual(
             records[core]["availability"],
             [{"kitId": "kit:one", "requiredRank": 2}],
         )
@@ -617,11 +734,43 @@ class PlannerCatalogueTests(unittest.TestCase):
                 "status": "incomplete",
             },
         )
-        self.assertIn("augment:concept", records)
-        self.assertNotIn("augment:rifle-variant", records)
+        self.assertNotIn("augment:concept", records)
+        self.assertIn("augment:rifle-variant", records)
+        augment = records["augment:rifle-variant"]
         self.assertEqual(
-            records["augment:concept"]["implementationIds"],
-            ["augment:rifle-variant"],
+            augment["collectionConceptId"],
+            "augment:concept",
+        )
+        self.assertEqual(
+            augment["availability"],
+            {"purchasable": True},
+        )
+        self.assertEqual(
+            augment["compatibleWeaponIds"],
+            ["weapon:visible"],
+        )
+        self.assertEqual(
+            augment["displayName"],
+            "Rifle-specific payload",
+        )
+        self.assertEqual(
+            augment["icon"],
+            {"path": "icons/rifle-specific-payload.png"},
+        )
+        self.assertEqual(
+            augment["description"],
+            (
+                "Rifle-specific payload flavor text.\r\n\r\n"
+                "Rifle-specific payload summary."
+            ),
+        )
+        self.assertEqual(
+            augment["descriptionPanel"],
+            {
+                "description": None,
+                "descriptionSecondary": "Rifle-specific payload flavor text.",
+                "descriptionUpper": "Rifle-specific payload summary.",
+            },
         )
         self.assertNotIn("effects", records[core])
         self.assertNotIn("stats", records[core])
@@ -654,7 +803,13 @@ class PlannerCatalogueTests(unittest.TestCase):
         )
         self.assertEqual(
             records["weapon:visible"]["compatibility"]["compatibleAugmentIds"],
-            ["augment:concept"],
+            ["augment:rifle-variant"],
+        )
+        self.assertEqual(
+            records["weapon:visible"]["compatibility"]["augmentSlot"][
+                "compatibleIds"
+            ],
+            ["augment:rifle-variant"],
         )
         self.assertEqual(
             records["mod:magazine"]["compatibility"]["compatibleWeaponIds"],
@@ -665,8 +820,64 @@ class PlannerCatalogueTests(unittest.TestCase):
             magazine["conditionalDescriptions"],
         )
         self.assertEqual(
+            records["mod:magazine"]["staticStatLines"],
+            magazine["staticStatLines"],
+        )
+        self.assertIsNone(records["mod:magazine"]["authoredDescription"])
+        self.assertEqual(
+            records["mod:magazine"]["description"],
+            (
+                "+20.0% Reload Speed\r\n\r\n"
+                "<Bold>On Reload</>:\r\n  +10% Reload Speed"
+            ),
+        )
+        self.assertNotIn("effects", records["mod:magazine"])
+        self.assertNotIn("stats", records["mod:magazine"])
+        self.assertEqual(
             result["coverage"]["recordsWithConditionalDescriptions"],
             1,
+        )
+        self.assertEqual(result["coverage"]["recordsWithStaticStatLines"], 1)
+        self.assertEqual(result["coverage"]["augmentPacks"], 1)
+        self.assertEqual(result["coverage"]["augmentImplementations"], 1)
+        self.assertEqual(
+            result["textContract"]["augmentDescriptionComposition"],
+            {
+                "componentField": "descriptionPanel",
+                "conditionalDescriptionField": "conditionalDescriptions",
+                "conditionalStatIndent": "  ",
+                "descriptionField": "description",
+                "lineSeparator": "\r\n",
+                "order": [
+                    "descriptionPanel",
+                    "staticStatLines",
+                    "conditionalDescriptions",
+                ],
+                "panelOrder": [
+                    "description",
+                    "descriptionSecondary",
+                    "descriptionUpper",
+                ],
+                "sectionSeparator": "\r\n\r\n",
+                "staticStatField": "staticStatLines",
+            },
+        )
+        self.assertEqual(
+            result["textContract"]["attachmentDescriptionComposition"],
+            {
+                "authoredDescriptionField": "authoredDescription",
+                "conditionalDescriptionField": "conditionalDescriptions",
+                "conditionalStatIndent": "  ",
+                "descriptionField": "description",
+                "lineSeparator": "\r\n",
+                "order": [
+                    "authoredDescription",
+                    "staticStatLines",
+                    "conditionalDescriptions",
+                ],
+                "sectionSeparator": "\r\n\r\n",
+                "staticStatField": "staticStatLines",
+            },
         )
         self.assertEqual(
             records[modifier]["dependencies"]["targetSelection"]["candidateIds"],
@@ -695,6 +906,11 @@ class PlannerCatalogueTests(unittest.TestCase):
             },
         )
         self.assertEqual(layout["renderExtent"], {"columns": 10, "rows": 6})
+        self.assertEqual(result["perkGrid"]["perkColorPalette"], perk_color_palette)
+        self.assertEqual(
+            result["perkGrid"]["familyConnector"]["path"],
+            "grid-assets/textures/connector-ghost.png",
+        )
 
         no_primary_semantic = deepcopy(semantic)
         no_primary_kit = next(

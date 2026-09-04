@@ -1,6 +1,6 @@
-# AFE2 Build Editor — catalogue extractor
+# AFE2 Build Editor
 
-This repository currently contains the read-only catalogue-extraction foundation for an **Aliens: Fireteam Elite 2** build editor. The editor UI and build save/load work are intentionally deferred.
+This repository contains a read-only catalogue extractor and a local **Aliens: Fireteam Elite 2** build-editor frontend. The editor currently supports kit and ability selection, perk-grid placement, weapon customization, and Major/Minor item selection. Account-backed sharing and public build storage are deferred.
 
 The extractor discovers the Steam installation, indexes the game archives, classifies likely build-editor records, converts selected UE4.27 packages, reads serialized properties and effect definitions, exports PNG icons, validates the result, and reports catalogue changes between game updates. It never modifies the game installation.
 
@@ -9,6 +9,61 @@ The extractor discovers the Steam installation, indexes the game archives, class
 If you just want to install, run, update, or troubleshoot the extractor, use
 the plain-language [operator runbook](RUNBOOK.md). The rest of this README is
 the technical reference for the extraction model and generated data contract.
+
+## Run the local editor
+
+The frontend reads the generated, ignored `.local/catalogue/` publication. Run
+a complete extraction first if that directory does not already contain
+`planner-catalogue.json`, `icons/`, and `grid-assets/`.
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Open the URL printed by Vite (normally `http://localhost:5173`). The local
+editor provides:
+
+- all game-derived kits, including Specialist ability choices and Duelist's
+  authored second-primary slot;
+- cursor-follow click-to-place and drag-and-drop perk placement, rotation,
+  movement, removal, overlap/bounds checks, orthogonal modifier-link
+  diagnostics, and compatible-target resolution; hover a grid chip and press
+  `D` to rotate, `R` to show compatible modifiers, or `F` to remove/reset it;
+- weapon choices filtered per kit and shown with their full-colour `GunIcon`
+  art when available, followed by the selected weapon's exact three component
+  sockets, trait slot, and augment slot;
+- the authored Major and Minor item pools; and
+- automatic local-browser persistence under a versioned build-state key.
+
+The frontend lives entirely under `frontend/`. Development requests for
+`/catalogue/*` are served directly from `.local/catalogue/`; the production
+build copies only files referenced by `planner-catalogue.json` into
+`frontend/dist/catalogue/`.
+
+```bash
+cd frontend
+npm run typecheck
+npm test
+npm run build
+
+# Optional full-data browser smoke test
+npx playwright install chromium
+npm run test:e2e
+```
+
+The unit tests use a small synthetic catalogue and do not require local game
+files. `npm run build` and the browser smoke test intentionally require the
+local extracted catalogue. Extracted icons, authored text, and grid art may be
+subject to redistribution restrictions; a successful local production build
+is not permission to publish those assets.
+
+Frontend build state retains canonical Unreal IDs but contains no account or
+owner field. In the planned hosted path, Clerk will own the browser session,
+the Cloudflare Worker will verify that identity, and server-side code will set
+`builds.owner_id` and `votes.user_id`; a browser-supplied owner ID should never
+be trusted.
 
 ## Current boundary
 
@@ -20,7 +75,7 @@ AFE2 uses two encrypted archive systems:
 Package paths are exact game evidence, but a matching path alone does not prove a player-facing name, grid shape, icon, stat, or compatibility relationship. For that reason:
 
 - `candidate-records.json` contains every path-classified candidate and attaches serialized name, description, icon, effect, grid, kit-role, dependency, and mechanically proven stat evidence when available.
-- `semantic-assets.json` is the normalized evidence layer. It also contains the canonical kit-ability concepts, class-authored display icons, and the exact pre-mission Major/Minor item slots, and records per-stage coverage and unresolved dependencies; editor admission and compatibility are resolved by the later canonical projection rather than by parse success alone.
+- `semantic-assets.json` is the normalized evidence layer. It also contains the canonical kit-ability concepts, class-authored display icons, exact perk restriction classes used by the grid's blue/green tint logic, and the exact pre-mission Major/Minor item slots, and records per-stage coverage and unresolved dependencies; editor admission and compatibility are resolved by the later canonical projection rather than by parse success alone.
 - `collection-assets.json` is the canonical player-visible index. It resolves the authored `Store_MainHub_Credits` categories through product and reward wrappers to their terminal records, separately traces starting and earned class-unlock rewards to exact kit records under `kitMembership`, and audits every observed Collection category as included, deliberately ignored, or unknown. It preserves membership, acquisition evidence, and fail-closed unresolved references for both routes.
 - `grid-assets.json` inventories the source-derived PerkGrid art, widget/layout definitions, shared brush dependencies, palette, dimensions, and rendering lookup contract. Its PNG and serialized-widget artifacts live under `grid-assets/`.
 - `planner-catalogue.json` is the flat, fail-closed projection consumed by the v0 editor. It combines canonical Store and kit membership, class-authored abilities and perk unlock evidence, and normalized progression rewards, and contains only editor-selectable identities and relationships. Every record carries authored player-facing text; package paths remain stable IDs, never fallback labels.
@@ -38,6 +93,7 @@ admitting false-positive path candidates.
 ## Requirements
 
 - Python 3.10+
+- Node.js 22.12+ for the frontend
 - A locally owned Steam installation of AFE2
 - Git
 - Stable Rust and Cargo 1.85 or newer
@@ -131,7 +187,7 @@ A default semantic extraction publishes these files together:
 - `candidate-records.json` — evidence-labelled class, ability, perk, grid, weapon, mod, trait, augment, and item candidates
 - `semantic-assets.json` — normalized serialized text, parent/effect/icon links, class-authored perk boards, ability and weapon slots, the two player item slots, chip entitlements, canonical kit abilities and class icons, perk-grid shapes, tag-derived dependencies, raw effect settings, mechanically proven stat operations, failures, and explicit coverage gaps
 - `collection-assets.json` — normalized Store/Collection categories, a complete included/ignored/unknown category audit, product rows, wrapper chains, terminal memberships, canonical starting/earned kit membership, `RewardTable_Settings_V1` progression perks, acquisition metadata, and any fail-closed unresolved entries
-- `planner-catalogue.json` — the validated flat v0 editor dataset: source build metadata, a UI-text contract, visible kits, abilities, globally equipable unlocked perks, weapons, labelled attachment slots and choices, traits, augment concepts, Major/Minor item slots and choices, authored UI-description groups, compatibility edges, and per-kit board contracts
+- `planner-catalogue.json` — the validated flat v0 editor dataset: source build metadata, a UI-text contract, visible kits, abilities, globally equipable unlocked perks, weapons, labelled attachment slots and choices, traits, weapon-specific augments linked to their Collection unlock packs, Major/Minor item slots and choices, backend-composed attachment summaries, authored UI-description groups, compatibility edges, and per-kit board contracts
 - `icons/*.png` — deterministic, content-hashed UI textures referenced by semantic records
 - `grid-assets.json` — deterministic PerkGrid asset manifest, exact texture/widget dependencies, dimensions, family/footprint labels, palette, render-order contract, failures, and coverage
 - `grid-assets/textures/*.png` — dedicated chip, frame, connector, lock-region, slot, background, and interaction art plus every directly imported shared UI texture
@@ -241,11 +297,15 @@ Duelist's authored second slot is another Primary slot, so it receives the same
 18-role pool rather than a weapon-family submenu.
 
 Augments are also flat at the UI boundary. In the current verified Steam build
-`25057376`, the 60 Collection augment packs become 60 planner concepts. Each
-concept retains its compatible weapons and an `implementationByWeaponId` map to
-the correct weapon-specific asset, so those implementation assets do not appear
-as hundreds of duplicate choices. The same snapshot contains 15 minor and 11
-major item records. The exact `DefaultPlayerCharacter.PartSlots` evidence
+`25057376`, 60 Collection augment packs admit 239 weapon-specific
+implementations. Of those, 234 apply to the 37 Collection-visible weapons and
+become planner records. Each record uses the exact name, icon, authored text
+regions, generated comparison rows, and supplemental stat groups exposed by the
+in-game weapon picker, while `collectionConceptId` and Collection availability
+preserve its unlock provenance. Weapon augment slots reference these
+implementation IDs directly; validation rejects ambiguous pack or weapon
+mappings. The same snapshot contains 15 minor and 11 major item
+records. The exact `DefaultPlayerCharacter.PartSlots` evidence
 publishes one `Major Item` picker and one `Minor Item` picker, each filtered to
 its matching Collection choices. Items retain their `itemTier` and are made
 available to all extracted kits; mission inventory slots and quantities are out
@@ -262,24 +322,49 @@ can target more than one record, the saved build must also record the chosen
 `targetId`.
 
 Every planner record must have a nonblank authored `displayName` and a decoded,
-relative `icons/*.png` asset. Names and every authored description are checked
-against their semantic source, and internal package/object/localization syntax
-is rejected as display text. Plain `description` and structured
-`conditionalDescriptions` retain the game's Unreal rich-text tags for a
-frontend parser; they must not be injected as raw HTML. An explicit empty
-serialized description remains null rather than being replaced with a guessed
-path or generated stat copy. Every selectable perk must also have a resolved
-chip-body binding, and each ability
-anchor must have its resolved slot-controlled body texture. Attachments and
-traits may also publish the game's authored `conditionalDescriptions`: ordered
-condition text and UI stat lines with `statText`, `statValue`, `displayType`,
-and `result`. `conditionText` and `statText` are nullable because the shipped
-data uses empty sentinel lines; the frontend should omit those text nodes. Here
-`statValue` is the value authored for formatting that UI line, not the deferred
-normalized weapon-stat or gameplay-effect model. Numeric
-mechanics and gameplay-effect payloads remain available in the semantic
-evidence layer, but are intentionally omitted from `planner-catalogue.json`
-for v0; the validator rejects them if they leak into the editor dataset.
+relative `icons/*.png` asset. Names and authored text are checked against their
+semantic source, and internal package/object/localization syntax is rejected as
+display text. Text retains the game's Unreal rich-text tags for a frontend
+parser; it must not be injected as raw HTML. Every selectable perk must also
+have a resolved chip-body binding, and each ability anchor must have its
+resolved slot-controlled body texture.
+
+Most component mods and traits do not serialize a prose description, while
+augment implementations usually serialize a short summary without enumerating
+all of their numeric effects. The game builds the remaining comparison copy
+from visible GameplayEffects and the canonical `AttributeMetaData` display
+rows, with additional or triggered text stored as authored conditional groups.
+The extractor also honors a GameplayEffect's
+`OverrideComparisonStat` UI object: this is what turns several internal
+aim-assist or handling modifiers into the single player-facing `Aim Assist` or
+`Handling` row. Mod-only filtering and label overrides are not applied to trait
+rows; the two trait-picker overrides for `Reload Speed` and `Overheat Duration`
+are applied independently.
+
+The catalogue performs that presentation work once in the backend. A mod or
+trait preserves its serialized prose as `authoredDescription`; an augment keeps
+the picker panel's independent Description, FlavorText, and DescriptionShort
+regions under `descriptionPanel`. All three attachment kinds publish each
+ready-to-render computed row under `staticStatLines` and the game's ordered
+additional/conditional UI rows under `conditionalDescriptions`. To give a
+simple editor one complete explanation of the choice, top-level `description`
+is a readability-oriented composition of those sections, with the line and
+section separators and two-space conditional-stat indent declared by the
+matching entry under `textContract`. Every generated stat occupies its own
+line; a trigger such as `On Hit:` occupies the preceding line and its child
+rows are indented. Generated signs are compact (`+20.0%`, not `+ 20.0%`). The
+structured fields remain authoritative for a closer recreation of the game
+panel. The frontend may render the composed string directly with whitespace
+preservation; it must not derive percentages or reinterpret effect magnitudes.
+
+Each structured static row includes its canonical attribute, player-facing
+label and formatted value, ordering, desirability direction, and source effect
+path. Conditional rows retain authored `statText`, `statValue`, `displayType`,
+and `result`; nullable condition/stat text represents shipped sentinel lines
+that the frontend should omit. Raw gameplay-effect definitions and normalized
+mechanical operations remain in the semantic evidence layer and are still
+intentionally excluded from `planner-catalogue.json`; validation rejects those
+payloads if they leak into the editor dataset.
 
 ## Weapon icon evidence
 
@@ -299,14 +384,12 @@ catalogue. The static `GunIcon` is therefore the deterministic default image.
 
 All 67 current weapon candidates have a decoded planner-facing primary icon,
 including all 37 weapons in the canonical Collection list. One shipped-data
-exception remains:
-Mondo Heat 9000 points its serialized `GunIcon` at the generic Kramer rifle
-art. While that exact placeholder reference remains, the extractor preserves it
-as `serializedIcon` and publishes Mondo's trait icon as the planner-facing
-`icon`. Its Mondo-specific `AmmoIcon` remains independently available as
-`silhouetteIcon`. The fallback is deliberately guarded by the known Kramer
-package path: if a future game build supplies a different, dedicated Mondo
-`GunIcon`, that serialized art wins automatically.
+naming oddity remains: Mondo Heat 9000 points its serialized `GunIcon` at
+`Icon_Venus_Rifle_Auto_Kramer`, but decoding that texture proves its contents
+are the correct transparent Mondo weapon art. The extractor therefore trusts
+the authored reference regardless of its stale internal filename. Mondo's
+separate `AmmoIcon` remains available as `silhouetteIcon`, and a future change
+to the serialized `GunIcon` will be followed without a filename-specific rule.
 
 ## Kit icon evidence
 
@@ -442,6 +525,15 @@ parses the eight exact linear RGBA constants and switch order from
 widget artifacts preserve the rest of the board behavior instead of replacing
 it with screenshot guesses.
 
+Each semantic perk also carries `visualClassification.restrictionType`, parsed
+from the materialized `RestrictionType` enum (`kit`, `role`, or `none`) with its
+owning export retained as evidence. The placement widget proves that `kit`
+chips use the green rarity tint while `role` and `none` use the blue rarity
+tint; the editor reserves red for an invalid connection and orange for the
+active compatibility family. `planner-catalogue.json` projects this field and
+the exact eight-color connector palette so the frontend does not need to infer
+either contract from names or paths.
+
 Each semantic perk now carries `chipVisual.family`. The resolver uses serialized
 `ClassAbilityType`/`ReplacerType` for ability-replacer art, explicit `Type` for
 modifier art, then follows any Blueprint parent chain before accepting the
@@ -463,6 +555,11 @@ silently publishing a differently shaped board.
 
 The current asset is `/Game/Blueprints/Venus_Weapons/Attachments/Magazines/Magazines_Tubular/Avo_Magazine_Tubular_Priming`. It serializes `Priming Chamber`, an explicitly empty description, and the tubular-magazine icon. Its configured effect links to `Avo_Weapon_ReloadSpeed` with raw float32 magnitude `1.2000000476837158`; that effect applies a SetByCaller `Division` modifier to `TimeToReload`. The semantic evidence therefore normalizes the formula as `TimeToReload / 1.2`: +20% reload rate, a `0.833333` time multiplier, or 16.666667% less reload time. The extractor does not attach the unused legacy `Attachment_PrimingMagazine` fire-rate effect or the legacy `Priming Magazine` text.
 
+The planner presents that evidence exactly as the client-facing static row
+`+20.0% Reload Speed`. It appears both as structured `staticStatLines` data and
+in the ready-to-render top-level `description`; the browser performs no reload
+speed calculation.
+
 The current Store/Collection data lists Priming Chamber directly as Magazines
 entry 89, marked non-purchasable. That canonical membership admits it to
 `planner-catalogue.json` despite its presently unobtainable state. If a later
@@ -481,13 +578,16 @@ Against Steam build `25057376`, the extractor indexed:
   resolved shapes, render bindings, and dependency targets
 - 37 Collection weapons, each with a decoded default icon and a resolved
   three-component/one-trait/one-augment compatibility contract
-- 60 flat Collection augment concepts backed by their compatible
-  weapon-specific implementations
+- 234 flat weapon-specific augment choices admitted through 60 Collection
+  augment packs; all have complete picker copy, 210 have generated comparison
+  rows, and 11 also have authored supplemental stat groups
 - 15 minor and 11 major Collection item choices, available through exactly one
   authored Minor and one authored Major loadout slot
-- 875 selectable records with 875 human-readable names; 630 have plain
-  descriptions and 140 have conditional-description groups. The remaining 82
-  mods and 23 traits explicitly author no UI copy and remain null.
+- 1,049 selectable records with 1,049 human-readable names and descriptions;
+  all 208 component mods, 38 traits, and 234 weapon-specific augment
+  implementations have backend-composed player-facing copy. Across those
+  attachments, 420 records have static comparison rows and 151 have authored
+  additional/conditional groups in this snapshot
 - one validated 42-placeable-cell layout per kit, with resolved ability anchors
   and grid art
 

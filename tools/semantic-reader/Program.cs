@@ -9,7 +9,7 @@ using SkiaSharp;
 using UAssetAPI;
 using UAssetAPI.UnrealTypes;
 
-const string ReaderVersion = "0.3.1";
+const string ReaderVersion = "0.3.2";
 
 if (args is ["--version"])
 {
@@ -295,6 +295,12 @@ static ReaderAsset TrimAsset(AssetRequest request, JObject serialized, UAsset as
             ["templateIndex"] = source["TemplateIndex"]?.DeepClone(),
             ["data"] = source["Data"]?.DeepClone() ?? new JArray(),
         };
+        // UAssetAPI serializes cooked DataTable rows outside the ordinary
+        // property-data array.  Keep that authored payload when present so
+        // callers can normalize canonical game metadata tables without
+        // retaining the rest of the very large export document.
+        if (source["Table"] is JToken table)
+            trimmed["table"] = table.DeepClone();
         if (request.IncludeScriptBytecode)
         {
             foreach (var (sourceName, outputName) in new[]
@@ -363,7 +369,7 @@ sealed record ReaderFailure(string Stage, string PackagePath, string Reason);
 sealed class ReaderOutput
 {
     public int SchemaVersion { get; } = 1;
-    public string ReaderVersion { get; } = "0.3.1";
+    public string ReaderVersion { get; } = "0.3.2";
     public List<ReaderAsset> Assets { get; } = [];
     public List<ReaderIcon> Icons { get; } = [];
     public List<ReaderFailure> Failures { get; } = [];

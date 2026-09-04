@@ -7,8 +7,17 @@ import math
 import re
 from typing import Any
 
+from .attachment_descriptions import (
+    ATTACHMENT_DESCRIPTION_CONDITIONAL_STAT_INDENT,
+    ATTACHMENT_DESCRIPTION_LINE_SEPARATOR,
+    ATTACHMENT_DESCRIPTION_SECTION_SEPARATOR,
+    AUGMENT_DESCRIPTION_PANEL_ORDER,
+    augment_description_panel,
+    project_attachment_description,
+)
 from .classify import CANDIDATE_KINDS
 from .collection import IGNORED_COLLECTION_CATEGORIES, PLANNER_CATEGORY_KINDS
+from .errors import CatalogueError
 from .planner_catalogue import is_human_ui_text
 
 _SHA256_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
@@ -18,6 +27,39 @@ _ITEM_INVENTORY_TAG_BY_TIER = {
     "minor": "Ability.Consumable.InventoryType.Minor",
 }
 _PLAYER_ITEM_SLOT_TAG = "Slot.Consumable.Custom"
+def _attachment_description_contract() -> dict[str, Any]:
+    return {
+        "authoredDescriptionField": "authoredDescription",
+        "conditionalDescriptionField": "conditionalDescriptions",
+        "conditionalStatIndent": ATTACHMENT_DESCRIPTION_CONDITIONAL_STAT_INDENT,
+        "descriptionField": "description",
+        "lineSeparator": ATTACHMENT_DESCRIPTION_LINE_SEPARATOR,
+        "order": [
+            "authoredDescription",
+            "staticStatLines",
+            "conditionalDescriptions",
+        ],
+        "sectionSeparator": ATTACHMENT_DESCRIPTION_SECTION_SEPARATOR,
+        "staticStatField": "staticStatLines",
+    }
+
+
+def _augment_description_contract() -> dict[str, Any]:
+    return {
+        "componentField": "descriptionPanel",
+        "conditionalDescriptionField": "conditionalDescriptions",
+        "conditionalStatIndent": ATTACHMENT_DESCRIPTION_CONDITIONAL_STAT_INDENT,
+        "descriptionField": "description",
+        "lineSeparator": ATTACHMENT_DESCRIPTION_LINE_SEPARATOR,
+        "order": [
+            "descriptionPanel",
+            "staticStatLines",
+            "conditionalDescriptions",
+        ],
+        "panelOrder": list(AUGMENT_DESCRIPTION_PANEL_ORDER),
+        "sectionSeparator": ATTACHMENT_DESCRIPTION_SECTION_SEPARATOR,
+        "staticStatField": "staticStatLines",
+    }
 
 
 def _expected_slot_category(slot: dict[str, Any]) -> tuple[str, str] | None:
@@ -120,6 +162,58 @@ def _valid_conditional_descriptions(
                 isinstance(stat_text, str) and stat_text.strip()
             )
     return has_visible_text
+
+
+def _valid_static_stat_lines(
+    value: Any,
+    *,
+    identities: tuple[Any, ...] = (),
+) -> bool:
+    """Validate backend-formatted comparable-stat rows, not raw mechanics."""
+
+    if not isinstance(value, list) or not value:
+        return False
+    sort_keys: list[tuple[int, str, str]] = []
+    attributes_seen: set[str] = set()
+    for line in value:
+        if not isinstance(line, dict):
+            return False
+        attribute = line.get("attribute")
+        display_text = line.get("displayText")
+        display_type = line.get("displayType")
+        display_value = line.get("displayValue")
+        effect_package = line.get("effectPackagePath")
+        result = line.get("result")
+        sort_order = line.get("sortOrder")
+        stat_text = line.get("statText")
+        stat_value = line.get("statValue")
+        if (
+            not isinstance(attribute, str)
+            or not attribute
+            or not isinstance(display_text, str)
+            or not display_text.strip()
+            or display_type not in {"Float", "Integer", "Percent"}
+            or not isinstance(display_value, str)
+            or not display_value.strip()
+            or not isinstance(effect_package, str)
+            or not effect_package
+            or result not in {"HigherIsBetter", "LowerIsBetter"}
+            or type(sort_order) is not int
+            or not isinstance(stat_text, str)
+            or not stat_text.strip()
+            or isinstance(stat_value, bool)
+            or not isinstance(stat_value, (int, float))
+            or not math.isfinite(float(stat_value))
+            or display_text != f"{display_value} {stat_text}"
+            or not is_human_ui_text(stat_text, identities=identities)
+            or not is_human_ui_text(display_text, identities=identities)
+        ):
+            return False
+        if attribute in attributes_seen:
+            return False
+        attributes_seen.add(attribute)
+        sort_keys.append((sort_order, attribute, effect_package))
+    return sort_keys == sorted(sort_keys)
 
 
 def _planner_kit_weapon_slot_matches(
@@ -385,7 +479,8 @@ def validate_outputs(
     collection_members_by_kind: dict[str, set[str]] = {
         kind: set() for kind in PLANNER_CATEGORY_KINDS.values()
     }
-    collection_augment_concept_ids: set[str] = set()
+    collection_augment_concept_by_terminal_id: dict[str, str] = {}
+    collection_augment_availability_by_concept_id: dict[str, Any] = {}
     canonical_kit_member_ids: set[str] = set()
     if collection_assets is not None:
         if collection_assets.get("schemaVersion") != 1:
@@ -499,13 +594,54 @@ def validate_outputs(
             entries = category.get("entries")
             if not isinstance(entries, list):
                 continue
-            collection_augment_concept_ids.update(
-                entry["id"]
-                for entry in entries
-                if isinstance(entry, dict)
-                and entry.get("status") == "resolved"
-                and isinstance(entry.get("id"), str)
-            )
+            malformed_augment_entries: list[str] = []
+            duplicate_augment_memberships: list[str] = []
+            for index, entry in enumerate(entries):
+                if not isinstance(entry, dict) or entry.get("status") != "resolved":
+                    continue
+                concept_id = entry.get("id")
+                terminal_records = entry.get("terminalRecords")
+                if (
+                    not isinstance(concept_id, str)
+                    or not concept_id
+                    or not isinstance(terminal_records, list)
+                    or not terminal_records
+                ):
+                    malformed_augment_entries.append(
+                        concept_id if isinstance(concept_id, str) else str(index)
+                    )
+                    continue
+                collection_augment_availability_by_concept_id[concept_id] = entry.get(
+                    "availability"
+                )
+                for terminal in terminal_records:
+                    terminal_id = (
+                        terminal.get("id") if isinstance(terminal, dict) else None
+                    )
+                    if not isinstance(terminal_id, str) or not terminal_id:
+                        malformed_augment_entries.append(concept_id)
+                        continue
+                    previous = collection_augment_concept_by_terminal_id.get(
+                        terminal_id
+                    )
+                    if previous is not None and previous != concept_id:
+                        duplicate_augment_memberships.append(terminal_id)
+                        continue
+                    collection_augment_concept_by_terminal_id[terminal_id] = concept_id
+            if malformed_augment_entries:
+                errors.append(
+                    {
+                        "code": "invalid-collection-augment-terminal-membership",
+                        "ids": sorted(set(malformed_augment_entries)),
+                    }
+                )
+            if duplicate_augment_memberships:
+                errors.append(
+                    {
+                        "code": "duplicate-collection-augment-terminal-membership",
+                        "ids": sorted(set(duplicate_augment_memberships)),
+                    }
+                )
         if not isinstance(collection_coverage, dict) or (
             collection_coverage.get("uniqueTerminalRecords") != len(memberships)
         ):
@@ -714,6 +850,24 @@ def validate_outputs(
             errors.append({"code": "collection-assets-manifest-coverage-mismatch"})
 
     if planner_catalogue is not None:
+        attachment_attribute_metadata = candidates.get("attributeMetadata")
+        attachment_attribute_metadata_valid = (
+            isinstance(attachment_attribute_metadata, dict)
+            and attachment_attribute_metadata.get("packagePath")
+            == "/Game/Design/AttributeMetaData/AttributeMetaData"
+        )
+        if attachment_attribute_metadata_valid:
+            try:
+                # Validate the canonical table independently of any derived
+                # staticStatLines stored on candidate or planner records.
+                project_attachment_description(
+                    {"kind": "mod"},
+                    attribute_metadata=attachment_attribute_metadata,
+                )
+            except CatalogueError:
+                attachment_attribute_metadata_valid = False
+        if not attachment_attribute_metadata_valid:
+            errors.append({"code": "invalid-candidate-attribute-metadata"})
         if planner_catalogue.get("schemaVersion") != 1:
             errors.append({"code": "unsupported-planner-catalogue-schema"})
         if planner_catalogue.get("sourceFingerprint") != source_manifest.get("sourceFingerprint"):
@@ -723,6 +877,8 @@ def validate_outputs(
         if planner_catalogue.get("extractor") != source_manifest.get("extractor"):
             errors.append({"code": "planner-catalogue-extractor-metadata-mismatch"})
         if planner_catalogue.get("textContract") != {
+            "attachmentDescriptionComposition": _attachment_description_contract(),
+            "augmentDescriptionComposition": _augment_description_contract(),
             "conditionalDescriptionField": "conditionalDescriptions",
             "descriptionField": "description",
             "displayNameField": "displayName",
@@ -920,16 +1076,53 @@ def validate_outputs(
                         "missingIds": sorted(expected_ids - planner_ids_by_kind[kind]),
                     }
                 )
-        if planner_ids_by_kind["augment"] != collection_augment_concept_ids:
+        expected_visible_augment_ids: set[str] = set()
+        invalid_collection_augment_sources: list[str] = []
+        visible_weapon_ids = planner_ids_by_kind["weapon"]
+        for terminal_id in sorted(collection_augment_concept_by_terminal_id):
+            terminal = candidate_by_id.get(terminal_id)
+            compatibility = (
+                terminal.get("compatibility")
+                if isinstance(terminal, dict)
+                else None
+            )
+            compatible_weapon_ids = (
+                compatibility.get("compatibleWeaponIds")
+                if isinstance(compatibility, dict)
+                else None
+            )
+            if (
+                not isinstance(terminal, dict)
+                or terminal.get("kind") != "augment"
+                or not isinstance(compatibility, dict)
+                or compatibility.get("status") != "resolved"
+                or not isinstance(compatible_weapon_ids, list)
+                or not all(
+                    isinstance(weapon_id, str)
+                    for weapon_id in compatible_weapon_ids
+                )
+            ):
+                invalid_collection_augment_sources.append(terminal_id)
+                continue
+            if set(compatible_weapon_ids) & visible_weapon_ids:
+                expected_visible_augment_ids.add(terminal_id)
+        if invalid_collection_augment_sources:
+            errors.append(
+                {
+                    "code": "invalid-collection-augment-terminal-source",
+                    "ids": invalid_collection_augment_sources,
+                }
+            )
+        if planner_ids_by_kind["augment"] != expected_visible_augment_ids:
             errors.append(
                 {
                     "code": "planner-collection-projection-mismatch",
                     "expectedKind": "augment",
                     "extraIds": sorted(
-                        planner_ids_by_kind["augment"] - collection_augment_concept_ids
+                        planner_ids_by_kind["augment"] - expected_visible_augment_ids
                     ),
                     "missingIds": sorted(
-                        collection_augment_concept_ids - planner_ids_by_kind["augment"]
+                        expected_visible_augment_ids - planner_ids_by_kind["augment"]
                     ),
                 }
             )
@@ -1016,32 +1209,22 @@ def validate_outputs(
         invalid_conditional_descriptions: list[str] = []
         conditional_description_source_mismatches: list[str] = []
         unresolved_conditional_descriptions: list[str] = []
+        invalid_static_stat_lines: list[str] = []
+        static_stat_line_source_mismatches: list[str] = []
+        attachment_description_projection_mismatches: list[str] = []
+        attachment_description_composition_mismatches: list[str] = []
         forbidden_mechanics: list[str] = []
         invalid_ui_text: list[dict[str, str]] = []
         text_source_mismatches: list[dict[str, Any]] = []
-        collection_concepts = {
-            item.get("id"): item
-            for item in (collection_assets or {}).get("conceptRecords", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        }
         for record in planner_records:
             if not isinstance(record, dict) or not isinstance(record.get("id"), str):
                 errors.append({"code": "invalid-planner-record"})
                 continue
             source = candidate_by_id.get(record["id"])
+            expected_attachment_description: str | None = None
+            attachment_projection_succeeded = False
             expected_source_kind = "perk" if record.get("kind") == "ability" else record.get("kind")
-            concept_source = collection_concepts.get(record["id"])
             source_valid = source is not None and source.get("kind") == expected_source_kind
-            if record.get("kind") == "augment" and concept_source is not None:
-                source_valid = concept_source.get("kind") == "augment"
-                implementations = record.get("implementationIds")
-                if not isinstance(implementations, list) or not implementations:
-                    source_valid = False
-                elif any(
-                    candidate_by_id.get(value, {}).get("kind") != "augment"
-                    for value in implementations
-                ):
-                    source_valid = False
             if not source_valid:
                 errors.append(
                     {
@@ -1058,21 +1241,26 @@ def validate_outputs(
                 invalid_ui_text.append(
                     {"field": "displayName", "id": record["id"]}
                 )
-            text_source = (
-                concept_source
-                if record.get("kind") == "augment" and concept_source is not None
-                else source
-            )
-            if source_valid and isinstance(text_source, dict):
-                mismatch_fields = [
-                    field
-                    for field in (
+            if source_valid and isinstance(source, dict):
+                if record.get("kind") == "augment":
+                    comparison_fields = (
+                        "displayName",
+                        "icon",
+                        "conditionalDescriptions",
+                    )
+                elif record.get("kind") in {"mod", "trait"}:
+                    comparison_fields = ("displayName", "conditionalDescriptions")
+                else:
+                    comparison_fields = (
                         "displayName",
                         "description",
                         "conditionalDescriptions",
                     )
-                    if (field in record) != (field in text_source)
-                    or record.get(field) != text_source.get(field)
+                mismatch_fields = [
+                    field
+                    for field in comparison_fields
+                    if (field in record) != (field in source)
+                    or record.get(field) != source.get(field)
                 ]
                 if mismatch_fields:
                     text_source_mismatches.append(
@@ -1088,7 +1276,7 @@ def validate_outputs(
                 and not has_conditional_descriptions
             ):
                 invalid_conditional_descriptions.append(record["id"])
-            if record.get("kind") in {"mod", "trait"}:
+            if record.get("kind") in {"mod", "trait", "augment"}:
                 source_conditional = (
                     source.get("conditionalDescriptions")
                     if isinstance(source, dict)
@@ -1115,6 +1303,109 @@ def validate_outputs(
                     )
                 ):
                     conditional_description_source_mismatches.append(record["id"])
+            static_stat_lines = record.get("staticStatLines")
+            has_static_stat_lines = _valid_static_stat_lines(
+                static_stat_lines,
+                identities=identities,
+            )
+            if "staticStatLines" in record and not has_static_stat_lines:
+                invalid_static_stat_lines.append(record["id"])
+            if (
+                record.get("kind") not in {"augment", "mod", "trait"}
+                and "staticStatLines" in record
+            ):
+                invalid_static_stat_lines.append(record["id"])
+            if record.get("kind") in {"augment", "mod", "trait"} and source_valid:
+                source_static_stat_lines = (
+                    source.get("staticStatLines")
+                    if isinstance(source, dict)
+                    else None
+                )
+                source_has_static_stat_lines = _valid_static_stat_lines(
+                    source_static_stat_lines,
+                    identities=identities,
+                )
+                if (
+                    isinstance(source, dict)
+                    and "staticStatLines" in source
+                    and not source_has_static_stat_lines
+                ):
+                    invalid_static_stat_lines.append(record["id"])
+                if (
+                    static_stat_lines != source_static_stat_lines
+                    or ("staticStatLines" in record)
+                    != (
+                        isinstance(source, dict)
+                        and "staticStatLines" in source
+                    )
+                ):
+                    static_stat_line_source_mismatches.append(record["id"])
+                if record.get("kind") in {"mod", "trait"}:
+                    source_has_authored_description = (
+                        isinstance(source, dict) and "description" in source
+                    )
+                    if (
+                        ("authoredDescription" in record)
+                        != source_has_authored_description
+                        or record.get("authoredDescription")
+                        != (
+                            source.get("description")
+                            if isinstance(source, dict)
+                            else None
+                        )
+                    ):
+                        attachment_description_composition_mismatches.append(
+                            record["id"]
+                        )
+                if attachment_attribute_metadata_valid:
+                    try:
+                        (
+                            expected_attachment_description,
+                            expected_static_stat_lines,
+                        ) = project_attachment_description(
+                            source if isinstance(source, dict) else {},
+                            attribute_metadata=attachment_attribute_metadata,
+                        )
+                    except CatalogueError:
+                        attachment_description_projection_mismatches.append(record["id"])
+                    else:
+                        attachment_projection_succeeded = True
+                        expected_has_static_stat_lines = bool(
+                            expected_static_stat_lines
+                        )
+                        source_matches_projection = (
+                            (
+                                source_static_stat_lines
+                                if isinstance(source_static_stat_lines, list)
+                                else []
+                            )
+                            == expected_static_stat_lines
+                            and (
+                                isinstance(source, dict)
+                                and "staticStatLines" in source
+                            )
+                            == expected_has_static_stat_lines
+                        )
+                        planner_matches_projection = (
+                            (
+                                static_stat_lines
+                                if isinstance(static_stat_lines, list)
+                                else []
+                            )
+                            == expected_static_stat_lines
+                            and ("staticStatLines" in record)
+                            == expected_has_static_stat_lines
+                        )
+                        if not source_matches_projection or not planner_matches_projection:
+                            attachment_description_projection_mismatches.append(
+                                record["id"]
+                            )
+                        if (
+                            record.get("kind") in {"mod", "trait"}
+                            and record.get("description")
+                            != expected_attachment_description
+                        ):
+                            attachment_description_composition_mismatches.append(record["id"])
             description = record.get("description")
             if (
                 isinstance(description, str)
@@ -1623,33 +1914,112 @@ def validate_outputs(
                     targets=compatible_weapon_ids,
                     visible_kind="weapon",
                 )
-                implementation_ids = record.get("implementationIds")
-                implementation_map = record.get("implementationByWeaponId")
-                valid_implementation_ids = (
-                    isinstance(implementation_ids, list)
-                    and bool(implementation_ids)
-                    and all(isinstance(value, str) for value in implementation_ids)
+                expected_concept_id = collection_augment_concept_by_terminal_id.get(
+                    record["id"]
                 )
-                valid_implementation_map = (
-                    isinstance(implementation_map, dict)
-                    and all(
-                        isinstance(weapon_id, str)
-                        and weapon_id in planner_ids_by_kind["weapon"]
-                        and isinstance(implementation_id, str)
-                        and valid_implementation_ids
-                        and implementation_id in implementation_ids
-                        for weapon_id, implementation_id in implementation_map.items()
-                    )
-                    and valid_compatible_weapon_ids
-                    and set(implementation_map) == set(compatible_weapon_ids)
-                )
-                if not valid_implementation_ids or not valid_implementation_map:
+                if (
+                    record.get("collectionCategory") != "AugmentPacks"
+                    or not isinstance(expected_concept_id, str)
+                    or record.get("collectionConceptId") != expected_concept_id
+                ):
                     errors.append(
                         {
-                            "code": "invalid-planner-augment-implementation-map",
+                            "code": "planner-augment-collection-concept-mismatch",
                             "id": record["id"],
                         }
                     )
+                elif (
+                    "availability" not in record
+                    or record.get("availability")
+                    != collection_augment_availability_by_concept_id.get(
+                        expected_concept_id
+                    )
+                ):
+                    errors.append(
+                        {
+                            "code": "planner-augment-availability-source-mismatch",
+                            "id": record["id"],
+                        }
+                    )
+                source_compatibility = (
+                    source.get("compatibility")
+                    if isinstance(source, dict)
+                    else None
+                )
+                source_compatible_weapon_ids = (
+                    source_compatibility.get("compatibleWeaponIds")
+                    if isinstance(source_compatibility, dict)
+                    else None
+                )
+                expected_compatible_weapon_ids = (
+                    sorted(
+                        set(source_compatible_weapon_ids)
+                        & planner_ids_by_kind["weapon"]
+                    )
+                    if (
+                        isinstance(source_compatibility, dict)
+                        and source_compatibility.get("status") == "resolved"
+                        and isinstance(source_compatible_weapon_ids, list)
+                        and all(
+                            isinstance(weapon_id, str)
+                            for weapon_id in source_compatible_weapon_ids
+                        )
+                    )
+                    else None
+                )
+                if (
+                    expected_compatible_weapon_ids is None
+                    or not expected_compatible_weapon_ids
+                ):
+                    unresolved_compatibility.append(record["id"])
+                elif (
+                    not valid_compatible_weapon_ids
+                    or compatible_weapon_ids != expected_compatible_weapon_ids
+                ):
+                    errors.append(
+                        {
+                            "actualIds": compatible_weapon_ids,
+                            "code": "planner-augment-compatibility-source-mismatch",
+                            "expectedIds": expected_compatible_weapon_ids,
+                            "id": record["id"],
+                        }
+                    )
+
+                if isinstance(source, dict):
+                    expected_panel = augment_description_panel(source)
+                    actual_panel = record.get("descriptionPanel")
+                    if actual_panel != expected_panel:
+                        errors.append(
+                            {
+                                "code": "planner-augment-description-panel-mismatch",
+                                "id": record["id"],
+                            }
+                        )
+                    if (
+                        "description" not in record
+                        or not attachment_projection_succeeded
+                        or record.get("description")
+                        != expected_attachment_description
+                    ):
+                        errors.append(
+                            {
+                                "code": "planner-augment-description-composition-mismatch",
+                                "id": record["id"],
+                            }
+                        )
+                    for field in AUGMENT_DESCRIPTION_PANEL_ORDER:
+                        value = expected_panel[field]
+                        if (
+                            isinstance(value, str)
+                            and value.strip()
+                            and not is_human_ui_text(value, identities=identities)
+                        ):
+                            invalid_ui_text.append(
+                                {
+                                    "field": f"descriptionPanel.{field}",
+                                    "id": record["id"],
+                                }
+                            )
         for kit_id in sorted(planner_ids_by_kind["kit"]):
             kit = planner_by_id[kit_id]
             expected_perks = {
@@ -1955,6 +2325,36 @@ def validate_outputs(
                     "ids": sorted(unresolved_conditional_descriptions),
                 }
             )
+        if invalid_static_stat_lines:
+            errors.append(
+                {
+                    "code": "invalid-planner-static-stat-lines",
+                    "ids": sorted(set(invalid_static_stat_lines)),
+                }
+            )
+        if static_stat_line_source_mismatches:
+            errors.append(
+                {
+                    "code": "planner-static-stat-line-source-mismatch",
+                    "ids": sorted(set(static_stat_line_source_mismatches)),
+                }
+            )
+        if attachment_description_projection_mismatches:
+            errors.append(
+                {
+                    "code": "planner-attachment-description-projection-mismatch",
+                    "ids": sorted(
+                        set(attachment_description_projection_mismatches)
+                    ),
+                }
+            )
+        if attachment_description_composition_mismatches:
+            errors.append(
+                {
+                    "code": "planner-attachment-description-composition-mismatch",
+                    "ids": sorted(set(attachment_description_composition_mismatches)),
+                }
+            )
         if forbidden_mechanics:
             errors.append(
                 {"code": "planner-records-leaked-out-of-scope-mechanics", "ids": sorted(forbidden_mechanics)}
@@ -2207,10 +2607,55 @@ def validate_outputs(
                     record.get("conditionalDescriptions")
                 )
             )
+            or planner_coverage.get("recordsWithStaticStatLines")
+            != sum(
+                1
+                for record in planner_records
+                if isinstance(record, dict)
+                and _valid_static_stat_lines(record.get("staticStatLines"))
+            )
         ):
             errors.append(
                 {"code": "planner-description-coverage-mismatch"}
             )
+        expected_augment_pack_count = len(
+            {
+                collection_augment_concept_by_terminal_id[terminal_id]
+                for terminal_id in expected_visible_augment_ids
+            }
+        )
+        if not isinstance(planner_coverage, dict) or any(
+            (
+                planner_coverage.get("augmentImplementations")
+                != len(planner_ids_by_kind["augment"]),
+                planner_coverage.get("augmentPacks")
+                != expected_augment_pack_count,
+                planner_coverage.get("collectionAugmentImplementations")
+                != len(collection_augment_concept_by_terminal_id),
+            )
+        ):
+            errors.append({"code": "planner-augment-coverage-mismatch"})
+        expected_collection_members_by_kind = {
+            kind: len(collection_members_by_kind.get(kind, set()))
+            for kind in ("item", "mod", "trait", "weapon")
+        }
+        expected_collection_members_by_kind["augment"] = expected_augment_pack_count
+        if (
+            not isinstance(planner_coverage, dict)
+            or planner_coverage.get("collectionMembersByKind")
+            != expected_collection_members_by_kind
+        ):
+            errors.append({"code": "planner-collection-member-coverage-mismatch"})
+        expected_records_by_kind = {
+            kind: len(record_ids)
+            for kind, record_ids in planner_ids_by_kind.items()
+            if record_ids
+        }
+        if (
+            not isinstance(planner_coverage, dict)
+            or planner_coverage.get("recordsByKind") != expected_records_by_kind
+        ):
+            errors.append({"code": "planner-record-kind-coverage-mismatch"})
         manifest_coverage = source_manifest.get("coverage")
         if (
             isinstance(manifest_coverage, dict)

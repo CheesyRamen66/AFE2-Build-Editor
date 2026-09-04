@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover - non-POSIX hosts
 
 
 READER_NAME = "afe2-semantic-reader"
-READER_VERSION = "0.3.1"
+READER_VERSION = "0.3.2"
 TARGET_FRAMEWORK = "net9.0"
 PACKAGE_VERSIONS: Mapping[str, str] = {
     "CUE4Parse": "1.2.2",

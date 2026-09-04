@@ -40,6 +40,7 @@ DEFAULT_RULES = PROJECT_ROOT / "config/categories.json"
 DEFAULT_OUTPUT = PROJECT_ROOT / ".local/catalogue"
 DEFAULT_SAVE_EVIDENCE = PROJECT_ROOT / ".local/save-evidence.json"
 SEMANTIC_PYTHON_SOURCES = (
+    PROJECT_ROOT / "src/afe2_catalogue/attachment_descriptions.py",
     PROJECT_ROOT / "src/afe2_catalogue/collection.py",
     PROJECT_ROOT / "src/afe2_catalogue/grid_assets.py",
     PROJECT_ROOT / "src/afe2_catalogue/planner_catalogue.py",

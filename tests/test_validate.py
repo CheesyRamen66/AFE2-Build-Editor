@@ -57,6 +57,71 @@ def valid_conditional_descriptions() -> list[dict[str, object]]:
     ]
 
 
+def valid_static_stat_lines() -> list[dict[str, object]]:
+    return [
+        {
+            "attribute": "GunGameplayAttributes.TimeToReload",
+            "displayText": "+20.0% Reload Speed",
+            "displayType": "Percent",
+            "displayValue": "+20.0%",
+            "effectPackagePath": (
+                "/Game/Blueprints/Gameplay/GameplayEffects/AvoMods/"
+                "Avo_Weapon_ReloadSpeed"
+            ),
+            "result": "HigherIsBetter",
+            "sortOrder": 13,
+            "statText": "Reload Speed",
+            "statValue": 20.0,
+        }
+    ]
+
+
+def valid_reload_speed_effect() -> dict[str, object]:
+    return {
+        "configuredMagnitude": 1.2,
+        "definition": {
+            "modifiers": [
+                {
+                    "attribute": "TimeToReload",
+                    "magnitudeCalculationType": "setbycaller",
+                    "operation": "divide",
+                    "qualifiedAttribute": "GunGameplayAttributes.TimeToReload",
+                }
+            ],
+            "status": "parsed",
+        },
+        "effectPackagePath": (
+            "/Game/Blueprints/Gameplay/GameplayEffects/AvoMods/"
+            "Avo_Weapon_ReloadSpeed"
+        ),
+        "serializedFlags": {
+            "bInterpretTableLookupAsPercent": True,
+            "bNormalizePercentForEffectMagnitude": False,
+            "bVisibleOnUI": True,
+        },
+    }
+
+
+def planner_record(
+    arguments: dict[str, object], record_id: str
+) -> dict[str, object]:
+    return next(
+        record
+        for record in arguments["planner_catalogue"]["records"]
+        if record["id"] == record_id
+    )
+
+
+def source_record(
+    arguments: dict[str, object], record_id: str
+) -> dict[str, object]:
+    return next(
+        record
+        for record in arguments["candidates"]["records"]
+        if record["id"] == record_id
+    )
+
+
 def valid_semantic_candidates() -> list[dict[str, object]]:
     start_kit = "kit:start"
     custom_kit = "kit:custom"
@@ -146,6 +211,13 @@ def valid_planner_arguments() -> dict[str, object]:
     augment_implementation_id = "augment:implementation"
     item_id = "item:one"
     major_item_id = "item:major"
+    augment_icon = {
+        "height": 64,
+        "path": "icons/augment-implementation.png",
+        "pixelFormat": "PF_DXT5",
+        "sha256": "sha256:" + "c" * 64,
+        "width": 64,
+    }
 
     candidate_records = [
         {
@@ -173,7 +245,20 @@ def valid_planner_arguments() -> dict[str, object]:
         {"id": weapon_id, "kind": "weapon"},
         *({"id": mod_id, "kind": "mod"} for mod_id in mod_ids),
         {"id": trait_id, "kind": "trait"},
-        {"id": augment_implementation_id, "kind": "augment"},
+        {
+            "compatibility": {
+                "compatibleWeaponIds": [weapon_id],
+                "status": "resolved",
+            },
+            "description": "Augment effect",
+            "descriptionShort": "Augment summary",
+            "displayName": "Rifle Augment",
+            "flavorText": "Augment flavor",
+            "icon": deepcopy(augment_icon),
+            "id": augment_implementation_id,
+            "kind": "augment",
+            "packagePath": augment_implementation_id,
+        },
         {"id": item_id, "kind": "item"},
         {"id": major_item_id, "kind": "item"},
     ]
@@ -205,7 +290,7 @@ def valid_planner_arguments() -> dict[str, object]:
         "slotCategoryDisplayName": "Trait",
     }
     augment_slot = {
-        "compatibleIds": [augment_id],
+        "compatibleIds": [augment_implementation_id],
         "displayName": "Augment",
         "displayNameSource": "derived-slot-kind",
         "index": 4,
@@ -217,7 +302,7 @@ def valid_planner_arguments() -> dict[str, object]:
 
     weapon_compatibility = {
         "augmentSlot": augment_slot,
-        "compatibleAugmentIds": [augment_id],
+        "compatibleAugmentIds": [augment_implementation_id],
         "compatibleModIds": list(mod_ids),
         "compatibleTraitIds": [trait_id],
         "componentSlots": component_slots,
@@ -312,6 +397,7 @@ def valid_planner_arguments() -> dict[str, object]:
                     "compatibleWeaponIds": [weapon_id],
                     "status": "resolved",
                 },
+                "authoredDescription": f"Mod {index}",
                 "description": f"Mod {index}",
                 "displayName": f"Mod {index}",
                 "id": mod_id,
@@ -324,21 +410,30 @@ def valid_planner_arguments() -> dict[str, object]:
                 "compatibleWeaponIds": [weapon_id],
                 "status": "resolved",
             },
+            "authoredDescription": "Trait",
             "description": "Trait",
             "displayName": "Trait",
             "id": trait_id,
             "kind": "trait",
         },
         {
+            "availability": {"purchasable": True},
+            "collectionCategory": "AugmentPacks",
+            "collectionConceptId": augment_id,
             "compatibleWeaponIds": [weapon_id],
-            "description": "Augment",
-            "displayName": "Augment",
-            "id": augment_id,
-            "implementationByWeaponId": {
-                weapon_id: augment_implementation_id,
+            "description": (
+                "Augment effect\r\n\r\nAugment flavor\r\n\r\nAugment summary"
+            ),
+            "descriptionPanel": {
+                "description": "Augment effect",
+                "descriptionSecondary": "Augment flavor",
+                "descriptionUpper": "Augment summary",
             },
-            "implementationIds": [augment_implementation_id],
+            "displayName": "Rifle Augment",
+            "icon": deepcopy(augment_icon),
+            "id": augment_implementation_id,
             "kind": "augment",
+            "packagePath": augment_implementation_id,
         },
         {
             "description": "Item",
@@ -424,10 +519,31 @@ def valid_planner_arguments() -> dict[str, object]:
 
     planner_catalogue = {
         "coverage": {
+            "augmentImplementations": 1,
+            "augmentPacks": 1,
+            "collectionAugmentImplementations": 1,
+            "collectionMembersByKind": {
+                "augment": 1,
+                "item": 2,
+                "mod": 3,
+                "trait": 1,
+                "weapon": 1,
+            },
             "records": len(records),
+            "recordsByKind": {
+                "ability": 1,
+                "augment": 1,
+                "item": 2,
+                "kit": 1,
+                "mod": 3,
+                "perk": 1,
+                "trait": 1,
+                "weapon": 1,
+            },
             "recordsMissingDescription": 1,
             "recordsMissingDisplayName": 0,
             "recordsWithConditionalDescriptions": 0,
+            "recordsWithStaticStatLines": 0,
             "itemSlots": 2,
         },
         "extractor": {"name": "afe2-catalogue", "version": "test"},
@@ -509,6 +625,39 @@ def valid_planner_arguments() -> dict[str, object]:
         },
         "sourceFingerprint": fingerprint,
         "textContract": {
+            "attachmentDescriptionComposition": {
+                "authoredDescriptionField": "authoredDescription",
+                "conditionalDescriptionField": "conditionalDescriptions",
+                "conditionalStatIndent": "  ",
+                "descriptionField": "description",
+                "lineSeparator": "\r\n",
+                "order": [
+                    "authoredDescription",
+                    "staticStatLines",
+                    "conditionalDescriptions",
+                ],
+                "sectionSeparator": "\r\n\r\n",
+                "staticStatField": "staticStatLines",
+            },
+            "augmentDescriptionComposition": {
+                "componentField": "descriptionPanel",
+                "conditionalDescriptionField": "conditionalDescriptions",
+                "conditionalStatIndent": "  ",
+                "descriptionField": "description",
+                "lineSeparator": "\r\n",
+                "order": [
+                    "descriptionPanel",
+                    "staticStatLines",
+                    "conditionalDescriptions",
+                ],
+                "panelOrder": [
+                    "description",
+                    "descriptionSecondary",
+                    "descriptionUpper",
+                ],
+                "sectionSeparator": "\r\n\r\n",
+                "staticStatField": "staticStatLines",
+            },
             "conditionalDescriptionField": "conditionalDescriptions",
             "descriptionField": "description",
             "displayNameField": "displayName",
@@ -517,7 +666,23 @@ def valid_planner_arguments() -> dict[str, object]:
         },
     }
     return {
-        "candidates": {"records": candidate_records},
+        "candidates": {
+            "attributeMetadata": {
+                "packagePath": "/Game/Design/AttributeMetaData/AttributeMetaData",
+                "rows": [
+                    {
+                        "attribute": "GunGameplayAttributes.TimeToReload",
+                        "displayName": "Reload Time",
+                        "displayType": "Time",
+                        "modifierOperation": "Divide",
+                        "result": "LowerIsBetter",
+                        "sortOrder": 13,
+                    }
+                ],
+                "status": "parsed",
+            },
+            "records": candidate_records,
+        },
         "collection_assets": {
             "categoryAudit": {
                 "ignoredKeys": [],
@@ -527,14 +692,27 @@ def valid_planner_arguments() -> dict[str, object]:
             },
             "categories": [
                 {
-                    "entries": [{"id": augment_id, "status": "resolved"}],
+                    "entries": [
+                        {
+                            "availability": {"purchasable": True},
+                            "id": augment_id,
+                            "status": "resolved",
+                            "terminalRecords": [
+                                {
+                                    "id": augment_implementation_id,
+                                    "kind": "augment",
+                                    "packagePath": augment_implementation_id,
+                                }
+                            ],
+                        }
+                    ],
                     "key": "AugmentPacks",
                 }
             ],
             "conceptRecords": [
                 {
-                    "description": "Augment",
-                    "displayName": "Augment",
+                    "description": "Concept description",
+                    "displayName": "Concept Augment",
                     "id": augment_id,
                     "kind": "augment",
                 }
@@ -628,6 +806,10 @@ def add_visible_planner_weapon(
     compatibility["weaponSubType"] = weapon_subtype
     records.append(weapon)
     arguments["planner_catalogue"]["coverage"]["records"] += 1
+    arguments["planner_catalogue"]["coverage"]["recordsByKind"]["weapon"] += 1
+    arguments["planner_catalogue"]["coverage"]["collectionMembersByKind"][
+        "weapon"
+    ] += 1
 
     arguments["candidates"]["records"].append(
         {
@@ -648,9 +830,14 @@ def add_visible_planner_weapon(
             record["compatibility"]["compatibleWeaponIds"].append(weapon_id)
         elif record.get("kind") == "augment":
             record["compatibleWeaponIds"].append(weapon_id)
-            record["implementationByWeaponId"][weapon_id] = record[
-                "implementationIds"
-            ][0]
+            record["compatibleWeaponIds"].sort()
+            source = next(
+                candidate
+                for candidate in arguments["candidates"]["records"]
+                if candidate["id"] == record["id"]
+            )
+            source["compatibility"]["compatibleWeaponIds"].append(weapon_id)
+            source["compatibility"]["compatibleWeaponIds"].sort()
 
 
 class ValidationTests(unittest.TestCase):
@@ -659,6 +846,271 @@ class ValidationTests(unittest.TestCase):
 
         self.assertTrue(result["valid"], result["errors"])
         self.assertEqual(result["errors"], [])
+
+    def test_flat_augment_projection_uses_only_visible_terminal_records(self) -> None:
+        arguments = valid_planner_arguments()
+        hidden_id = "augment:hidden-implementation"
+        hidden = {
+            "compatibility": {
+                "compatibleWeaponIds": ["weapon:hidden"],
+                "status": "resolved",
+            },
+            "descriptionShort": "Hidden augment summary",
+            "displayName": "Hidden Augment",
+            "icon": {
+                "height": 64,
+                "path": "icons/hidden-augment.png",
+                "pixelFormat": "PF_DXT5",
+                "sha256": "sha256:" + "d" * 64,
+                "width": 64,
+            },
+            "id": hidden_id,
+            "kind": "augment",
+            "packagePath": hidden_id,
+        }
+        arguments["candidates"]["records"].append(hidden)
+        arguments["package_index"]["packages"].append(
+            {"packagePath": hidden_id}
+        )
+        arguments["collection_assets"]["categories"][0]["entries"][0][
+            "terminalRecords"
+        ].append(
+            {
+                "id": hidden_id,
+                "kind": "augment",
+                "packagePath": hidden_id,
+            }
+        )
+        arguments["collection_assets"]["memberships"][hidden_id] = [
+            {"categoryKey": "AugmentPacks"}
+        ]
+        arguments["collection_assets"]["coverage"][
+            "uniqueTerminalRecords"
+        ] += 1
+        arguments["planner_catalogue"]["coverage"][
+            "collectionAugmentImplementations"
+        ] += 1
+
+        hidden_result = validate_outputs(**arguments)
+
+        self.assertTrue(hidden_result["valid"], hidden_result["errors"])
+
+        hidden["compatibility"]["compatibleWeaponIds"] = ["weapon:one"]
+        visible_result = validate_outputs(**arguments)
+
+        self.assertFalse(visible_result["valid"])
+        projection = next(
+            error
+            for error in visible_result["errors"]
+            if error["code"] == "planner-collection-projection-mismatch"
+            and error.get("expectedKind") == "augment"
+        )
+        self.assertEqual(projection["missingIds"], [hidden_id])
+
+    def test_requires_exact_terminal_augment_fields_and_relationships(self) -> None:
+        def planner_augment(arguments: dict[str, object]) -> dict[str, object]:
+            return next(
+                record
+                for record in arguments["planner_catalogue"]["records"]
+                if record["kind"] == "augment"
+            )
+
+        def source_augment(arguments: dict[str, object]) -> dict[str, object]:
+            return next(
+                record
+                for record in arguments["candidates"]["records"]
+                if record["kind"] == "augment"
+            )
+
+        cases = (
+            (
+                "terminal-name",
+                lambda arguments: planner_augment(arguments).update(
+                    {"displayName": "Concept Augment"}
+                ),
+                "planner-record-text-source-mismatch",
+            ),
+            (
+                "terminal-icon",
+                lambda arguments: planner_augment(arguments)["icon"].update(
+                    {"sha256": "sha256:" + "e" * 64}
+                ),
+                "planner-record-text-source-mismatch",
+            ),
+            (
+                "terminal-conditional-description",
+                lambda arguments: source_augment(arguments).update(
+                    {"conditionalDescriptions": valid_conditional_descriptions()}
+                ),
+                "planner-conditional-description-source-mismatch",
+            ),
+            (
+                "collection-concept",
+                lambda arguments: planner_augment(arguments).update(
+                    {"collectionConceptId": "augment:wrong-concept"}
+                ),
+                "planner-augment-collection-concept-mismatch",
+            ),
+            (
+                "collection-availability",
+                lambda arguments: planner_augment(arguments).update(
+                    {"availability": {"purchasable": False}}
+                ),
+                "planner-augment-availability-source-mismatch",
+            ),
+            (
+                "description-panel",
+                lambda arguments: planner_augment(arguments)[
+                    "descriptionPanel"
+                ].update({"descriptionSecondary": "Wrong flavor"}),
+                "planner-augment-description-panel-mismatch",
+            ),
+            (
+                "flattened-description",
+                lambda arguments: planner_augment(arguments).update(
+                    {"description": "Augment effect Augment flavor Augment summary"}
+                ),
+                "planner-augment-description-composition-mismatch",
+            ),
+            (
+                "compatible-weapons",
+                lambda arguments: planner_augment(arguments).update(
+                    {"compatibleWeaponIds": []}
+                ),
+                "planner-augment-compatibility-source-mismatch",
+            ),
+        )
+        for label, mutate, expected_code in cases:
+            with self.subTest(label=label):
+                arguments = valid_planner_arguments()
+                mutate(arguments)
+
+                result = validate_outputs(**arguments)
+
+                self.assertFalse(result["valid"])
+                self.assertIn(
+                    expected_code,
+                    {error["code"] for error in result["errors"]},
+                )
+
+    def test_augment_enrichment_is_recomputed_from_effect_evidence(self) -> None:
+        arguments = valid_planner_arguments()
+        source = source_record(arguments, "augment:implementation")
+        planner = planner_record(arguments, "augment:implementation")
+        static_lines = valid_static_stat_lines()
+        conditional = valid_conditional_descriptions()
+        source["effects"] = [valid_reload_speed_effect()]
+        source["staticStatLines"] = deepcopy(static_lines)
+        source["conditionalDescriptions"] = deepcopy(conditional)
+        planner["staticStatLines"] = deepcopy(static_lines)
+        planner["conditionalDescriptions"] = deepcopy(conditional)
+        planner["description"] = (
+            "Augment effect\r\n\r\n"
+            "Augment flavor\r\n\r\n"
+            "Augment summary\r\n\r\n"
+            "+20.0% Reload Speed\r\n\r\n"
+            "<Bold>On Taking Damage</>:\r\n"
+            "  +25% Damage Resistance\r\n"
+            "  Lasts <Bold>5 seconds</>."
+        )
+        arguments["planner_catalogue"]["coverage"].update(
+            {
+                "recordsWithConditionalDescriptions": 1,
+                "recordsWithStaticStatLines": 1,
+            }
+        )
+
+        result = validate_outputs(**arguments)
+
+        self.assertTrue(result["valid"], result["errors"])
+
+        self_consistent_but_wrong = deepcopy(arguments)
+        for document in (
+            source_record(self_consistent_but_wrong, "augment:implementation"),
+            planner_record(self_consistent_but_wrong, "augment:implementation"),
+        ):
+            document["staticStatLines"][0].update(
+                {
+                    "displayText": "+999.0% Reload Speed",
+                    "displayValue": "+999.0%",
+                    "statValue": 999.0,
+                }
+            )
+        planner_record(self_consistent_but_wrong, "augment:implementation")[
+            "description"
+        ] = planner["description"].replace("+20.0%", "+999.0%")
+
+        wrong_result = validate_outputs(**self_consistent_but_wrong)
+
+        self.assertIn(
+            "planner-attachment-description-projection-mismatch",
+            {error["code"] for error in wrong_result["errors"]},
+        )
+        self.assertIn(
+            "planner-augment-description-composition-mismatch",
+            {error["code"] for error in wrong_result["errors"]},
+        )
+
+    def test_requires_exact_augment_description_contract_and_coverage(self) -> None:
+        baseline = valid_planner_arguments()
+        baseline["planner_catalogue"]["textContract"][
+            "augmentDescriptionComposition"
+        ]["separator"] = "\n\n"
+
+        contract_result = validate_outputs(**baseline)
+
+        self.assertFalse(contract_result["valid"])
+        self.assertIn(
+            "invalid-planner-text-contract",
+            {error["code"] for error in contract_result["errors"]},
+        )
+
+        for field, expected_code in (
+            ("augmentImplementations", "planner-augment-coverage-mismatch"),
+            ("augmentPacks", "planner-augment-coverage-mismatch"),
+            (
+                "collectionAugmentImplementations",
+                "planner-augment-coverage-mismatch",
+            ),
+            (
+                "collectionMembersByKind",
+                "planner-collection-member-coverage-mismatch",
+            ),
+            ("recordsByKind", "planner-record-kind-coverage-mismatch"),
+        ):
+            with self.subTest(field=field):
+                arguments = valid_planner_arguments()
+                coverage = arguments["planner_catalogue"]["coverage"]
+                if isinstance(coverage[field], dict):
+                    coverage[field]["augment"] = 999
+                else:
+                    coverage[field] = 999
+
+                result = validate_outputs(**arguments)
+
+                self.assertFalse(result["valid"])
+                self.assertIn(
+                    expected_code,
+                    {error["code"] for error in result["errors"]},
+                )
+
+    def test_requires_reciprocal_terminal_augment_weapon_slot(self) -> None:
+        arguments = valid_planner_arguments()
+        weapon = next(
+            record
+            for record in arguments["planner_catalogue"]["records"]
+            if record["kind"] == "weapon"
+        )
+        weapon["compatibility"]["augmentSlot"]["compatibleIds"] = []
+        weapon["compatibility"]["compatibleAugmentIds"] = []
+
+        result = validate_outputs(**arguments)
+
+        self.assertFalse(result["valid"])
+        self.assertIn(
+            "planner-compatibility-reciprocity-mismatch",
+            {error["code"] for error in result["errors"]},
+        )
 
     def test_semantic_publication_requires_planner_catalogue(self) -> None:
         arguments = valid_planner_arguments()
@@ -749,20 +1201,6 @@ class ValidationTests(unittest.TestCase):
                 )
 
     def test_requires_human_authored_text_and_exact_source_projection(self) -> None:
-        def planner_record(arguments: dict[str, object], record_id: str) -> dict[str, object]:
-            return next(
-                record
-                for record in arguments["planner_catalogue"]["records"]
-                if record["id"] == record_id
-            )
-
-        def source_record(arguments: dict[str, object], record_id: str) -> dict[str, object]:
-            return next(
-                record
-                for record in arguments["candidates"]["records"]
-                if record["id"] == record_id
-            )
-
         arguments = valid_planner_arguments()
         for document in (
             planner_record(arguments, "weapon:one"),
@@ -823,8 +1261,13 @@ class ValidationTests(unittest.TestCase):
         authored = valid_conditional_descriptions()
         planner_mod["conditionalDescriptions"] = deepcopy(authored)
         source_mod["conditionalDescriptions"] = deepcopy(authored)
-        del planner_mod["description"]
-        del source_mod["description"]
+        source_mod["description"] = None
+        planner_mod["authoredDescription"] = None
+        planner_mod["description"] = (
+            "<Bold>On Taking Damage</>:\r\n"
+            "  +25% Damage Resistance\r\n"
+            "  Lasts <Bold>5 seconds</>."
+        )
         arguments["planner_catalogue"]["coverage"][
             "recordsWithConditionalDescriptions"
         ] = 1
@@ -839,6 +1282,85 @@ class ValidationTests(unittest.TestCase):
             for record_id in warning["ids"]
         }
         self.assertNotIn("mod:magazine", missing_warning_ids)
+
+    def test_static_stat_lines_are_validated_and_count_as_ui_copy(self) -> None:
+        arguments = valid_planner_arguments()
+        planner_mod = planner_record(arguments, "mod:magazine")
+        source_mod = source_record(arguments, "mod:magazine")
+        lines = valid_static_stat_lines()
+        source_mod["description"] = None
+        source_mod["effects"] = [valid_reload_speed_effect()]
+        source_mod["staticStatLines"] = deepcopy(lines)
+        planner_mod["authoredDescription"] = None
+        planner_mod["description"] = "+20.0% Reload Speed"
+        planner_mod["staticStatLines"] = deepcopy(lines)
+        arguments["planner_catalogue"]["coverage"]["recordsWithStaticStatLines"] = 1
+
+        result = validate_outputs(**arguments)
+
+        self.assertTrue(result["valid"], result["errors"])
+        missing_warning_ids = {
+            record_id
+            for warning in result["warnings"]
+            if warning["code"] == "planner-records-missing-description"
+            for record_id in warning["ids"]
+        }
+        self.assertNotIn("mod:magazine", missing_warning_ids)
+
+        rewritten = deepcopy(arguments)
+        planner_record(rewritten, "mod:magazine")["staticStatLines"][0][
+            "statValue"
+        ] = 16.666667
+        rewritten_result = validate_outputs(**rewritten)
+        self.assertIn(
+            "planner-static-stat-line-source-mismatch",
+            {error["code"] for error in rewritten_result["errors"]},
+        )
+
+        malformed = deepcopy(arguments)
+        for document in (
+            planner_record(malformed, "mod:magazine"),
+            source_record(malformed, "mod:magazine"),
+        ):
+            document["staticStatLines"][0]["statValue"] = "20"
+        malformed_result = validate_outputs(**malformed)
+        self.assertIn(
+            "invalid-planner-static-stat-lines",
+            {error["code"] for error in malformed_result["errors"]},
+        )
+
+        bad_description = deepcopy(arguments)
+        planner_record(bad_description, "mod:magazine")["description"] = (
+            "-16.7% Reload Time"
+        )
+        bad_description_result = validate_outputs(**bad_description)
+        self.assertIn(
+            "planner-attachment-description-composition-mismatch",
+            {error["code"] for error in bad_description_result["errors"]},
+        )
+
+        self_consistent_but_wrong = deepcopy(arguments)
+        for document in (
+            planner_record(self_consistent_but_wrong, "mod:magazine"),
+            source_record(self_consistent_but_wrong, "mod:magazine"),
+        ):
+            document["staticStatLines"][0].update(
+                {
+                    "displayText": "+999.0% Reload Speed",
+                    "displayValue": "+999.0%",
+                    "statValue": 999.0,
+                }
+            )
+        planner_record(self_consistent_but_wrong, "mod:magazine")[
+            "description"
+        ] = "+999.0% Reload Speed"
+
+        wrong_result = validate_outputs(**self_consistent_but_wrong)
+
+        self.assertIn(
+            "planner-attachment-description-projection-mismatch",
+            {error["code"] for error in wrong_result["errors"]},
+        )
 
     def test_rejects_malformed_or_unprojected_conditional_descriptions(self) -> None:
         malformed = valid_planner_arguments()
@@ -1341,9 +1863,9 @@ class ValidationTests(unittest.TestCase):
             "mod:armature",
         ]
         compatibility["augmentSlot"]["compatibleIds"] = [
-            "augment:implementation"
+            "augment:hidden"
         ]
-        compatibility["compatibleAugmentIds"] = ["augment:implementation"]
+        compatibility["compatibleAugmentIds"] = ["augment:hidden"]
         records["mod:magazine"]["compatibility"]["compatibleWeaponIds"] = [
             "weapon:hidden"
         ]
@@ -1363,7 +1885,7 @@ class ValidationTests(unittest.TestCase):
                 for failure in failures
                 for target in failure.get("targets", [])
             },
-            {"augment:implementation", "mod:hidden", "weapon:hidden"},
+            {"augment:hidden", "mod:hidden", "weapon:hidden"},
         )
 
     def test_requires_resolved_attachment_compatibility(self) -> None:

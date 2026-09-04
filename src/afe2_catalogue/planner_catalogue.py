@@ -13,6 +13,14 @@ import re
 from collections import defaultdict
 from typing import Any, Mapping, Sequence
 
+from .attachment_descriptions import (
+    ATTACHMENT_DESCRIPTION_CONDITIONAL_STAT_INDENT,
+    ATTACHMENT_DESCRIPTION_LINE_SEPARATOR,
+    ATTACHMENT_DESCRIPTION_SECTION_SEPARATOR,
+    AUGMENT_DESCRIPTION_PANEL_ORDER,
+    augment_description_panel,
+    compose_attachment_description,
+)
 from .errors import CatalogueError
 from .grid_assets import resolve_chip_body_texture
 
@@ -26,6 +34,8 @@ _COMMON_FIELDS = (
     "icon",
     "itemTier",
     "silhouetteIcon",
+    "staticStatLines",
+    "visualClassification",
 )
 
 _ABILITY_ANCHOR_LAYOUT: dict[str, tuple[int, int, int, int]] = {
@@ -104,6 +114,18 @@ def _assert_human_record_text(source: Mapping[str, Any]) -> None:
             "selectable record had internal-looking authored description text: "
             + str(source.get("id"))
         )
+
+    for field in ("descriptionShort", "flavorText"):
+        value = source.get(field)
+        if (
+            isinstance(value, str)
+            and value.strip()
+            and not is_human_ui_text(value, identities=identities)
+        ):
+            raise CatalogueError(
+                f"selectable record had internal-looking authored {field} text: "
+                + str(source.get("id"))
+            )
 
     groups = source.get("conditionalDescriptions")
     if not isinstance(groups, list):
@@ -193,6 +215,29 @@ def _project_common(source: Mapping[str, Any], *, kind: str | None = None) -> di
         if field in source:
             record[field] = copy.deepcopy(source[field])
     return record
+
+
+def _project_augment_description(source: Mapping[str, Any]) -> tuple[str | None, dict[str, Any]]:
+    """Mirror every player-facing section in PopulateWithGunMod.
+
+    Collection reward-pack copy is a different player-visible presentation and
+    must not be used as fallback text for a weapon-specific implementation.
+    The flattened description gives simple consumers the complete authored,
+    comparable-stat, and conditional copy. The component fields and structured
+    rows retain enough information for a closer panel rendering.
+    """
+
+    panel = copy.deepcopy(augment_description_panel(source))
+    static_stat_lines = source.get("staticStatLines", [])
+    if not isinstance(static_stat_lines, list):
+        raise CatalogueError("Collection-visible augment static stat lines were malformed")
+    return (
+        compose_attachment_description(
+            source,
+            static_lines=static_stat_lines,
+        ),
+        panel,
+    )
 
 
 def _has_ui_description(record: Mapping[str, Any]) -> bool:
@@ -408,7 +453,7 @@ def _filtered_weapon_compatibility(
     *,
     visible_mod_ids: set[str],
     visible_trait_ids: set[str],
-    augment_concept_by_terminal_id: Mapping[str, str],
+    visible_augment_ids: set[str],
 ) -> dict[str, Any]:
     compatibility = _resolved_compatibility(source, label="weapon")
     raw_slots = compatibility.get("slots")
@@ -470,9 +515,9 @@ def _filtered_weapon_compatibility(
     augment_source = by_kind["augment"][0]
     augment_ids = sorted(
         {
-            augment_concept_by_terminal_id[value]
+            value
             for value in augment_source.get("compatibleIds", [])
-            if isinstance(value, str) and value in augment_concept_by_terminal_id
+            if isinstance(value, str) and value in visible_augment_ids
         }
     )
     if not augment_ids:
@@ -951,7 +996,7 @@ def _grid_contract(
             "perk-grid layout did not expose the required 42 placeable cells for kit(s): "
             + ", ".join(str(value) for value in invalid_counts)
         )
-    return {
+    contract: dict[str, Any] = {
         "coordinateSystem": {
             "columnOrigin": 0,
             "displayLabels": "spreadsheet-style, one-based rows",
@@ -985,6 +1030,20 @@ def _grid_contract(
             },
         },
     }
+    perk_color_palette = grid_assets.get("perkColorPalette")
+    if isinstance(perk_color_palette, Mapping):
+        contract["perkColorPalette"] = copy.deepcopy(perk_color_palette)
+    family_connectors = [
+        item
+        for item in textures
+        if isinstance(item, Mapping)
+        and item.get("role") == "connector"
+        and item.get("variant") == "ghost"
+        and isinstance(item.get("path"), str)
+    ]
+    if len(family_connectors) == 1:
+        contract["familyConnector"] = copy.deepcopy(family_connectors[0])
+    return contract
 
 
 def _attach_render_bindings(
@@ -1334,8 +1393,11 @@ def build_planner_catalogue(
         None,
     )
     augment_records = 0
+    augment_packs = 0
+    collection_augment_implementations: set[str] = set()
     visible_weapon_ids = selected["weapon"]
     augment_concept_by_terminal_id: dict[str, str] = {}
+    visible_augment_ids: set[str] = set()
     for entry in (augment_category or {}).get("entries", []):
         if not isinstance(entry, Mapping) or entry.get("status") != "resolved":
             continue
@@ -1350,14 +1412,19 @@ def build_planner_catalogue(
                 if isinstance(item, Mapping) and isinstance(item.get("id"), str)
             }
         )
-        variants: list[dict[str, Any]] = []
-        compatible_weapons: set[str] = set()
+        visible_variants = 0
         implementation_by_weapon: dict[str, str] = {}
         for terminal_id in terminal_ids:
             source = by_id.get(terminal_id)
             if source is None or source.get("kind") != "augment":
                 raise CatalogueError("Collection augment concept referenced a missing implementation")
-            variant = _project_common(source)
+            collection_augment_implementations.add(terminal_id)
+            previous_concept = augment_concept_by_terminal_id.get(terminal_id)
+            if previous_concept is not None and previous_concept != concept_id:
+                raise CatalogueError(
+                    "one Collection augment implementation belonged to multiple concepts"
+                )
+            augment_concept_by_terminal_id[terminal_id] = concept_id
             compatibility = source.get("compatibility")
             if not isinstance(compatibility, Mapping) or compatibility.get("status") != "resolved":
                 raise CatalogueError("Collection augment implementation compatibility was unresolved")
@@ -1368,39 +1435,32 @@ def build_planner_catalogue(
             )
             if not visible_compatibility:
                 continue
-            variant["compatibility"] = copy.deepcopy(compatibility)
-            variant["compatibility"]["compatibleWeaponIds"] = visible_compatibility
-            compatible_weapons.update(visible_compatibility)
             for weapon_id in visible_compatibility:
                 previous = implementation_by_weapon.get(weapon_id)
                 if previous is not None and previous != terminal_id:
                     raise CatalogueError(
-                        "augment concept resolved multiple implementations for one visible weapon"
+                        "augment pack resolved multiple implementations for one visible weapon"
                     )
                 implementation_by_weapon[weapon_id] = terminal_id
-            previous_concept = augment_concept_by_terminal_id.get(terminal_id)
-            if previous_concept is not None and previous_concept != concept_id:
-                raise CatalogueError(
-                    "one Collection augment implementation belonged to multiple concepts"
-                )
-            augment_concept_by_terminal_id[terminal_id] = concept_id
-            variants.append(variant)
-        usable_terminal_ids = [variant["id"] for variant in variants]
-        if not variants or not compatible_weapons:
+            variant = _project_common(source)
+            description, description_panel = _project_augment_description(source)
+            variant.update(
+                {
+                    "availability": copy.deepcopy(entry.get("availability")),
+                    "collectionCategory": "AugmentPacks",
+                    "collectionConceptId": concept_id,
+                    "compatibleWeaponIds": visible_compatibility,
+                    "description": description,
+                    "descriptionPanel": description_panel,
+                }
+            )
+            records.append(variant)
+            visible_augment_ids.add(terminal_id)
+            augment_records += 1
+            visible_variants += 1
+        if not visible_variants:
             raise CatalogueError("Collection augment concept had no visible compatible implementation")
-        record = _project_common(concept)
-        record.update(
-            {
-                "availability": copy.deepcopy(entry.get("availability")),
-                "collectionCategory": "AugmentPacks",
-                "compatibleWeaponIds": sorted(compatible_weapons),
-                "implementationByWeaponId": dict(sorted(implementation_by_weapon.items())),
-                "implementationIds": usable_terminal_ids,
-                "kind": "augment",
-            }
-        )
-        records.append(record)
-        augment_records += 1
+        augment_packs += 1
 
     for kind in ("weapon", "mod", "trait", "item"):
         for record_id in sorted(selected[kind]):
@@ -1423,7 +1483,7 @@ def build_planner_catalogue(
                     source,
                     visible_mod_ids=selected["mod"],
                     visible_trait_ids=selected["trait"],
-                    augment_concept_by_terminal_id=augment_concept_by_terminal_id,
+                    visible_augment_ids=visible_augment_ids,
                 )
                 # Keep the fixed component slots at the top level as the most
                 # common frontend lookup while retaining the complete relation
@@ -1432,6 +1492,17 @@ def build_planner_catalogue(
                     record["compatibility"]["componentSlots"]
                 )
             elif kind in {"mod", "trait"}:
+                if "description" in source:
+                    record["authoredDescription"] = copy.deepcopy(source["description"])
+                static_stat_lines = source.get("staticStatLines", [])
+                if not isinstance(static_stat_lines, list):
+                    raise CatalogueError(
+                        f"Collection-visible {kind} static stat lines were malformed"
+                    )
+                record["description"] = compose_attachment_description(
+                    source,
+                    static_lines=static_stat_lines,
+                )
                 record["compatibility"] = _filtered_attachment_compatibility(
                     source,
                     label=kind,
@@ -1480,9 +1551,12 @@ def build_planner_catalogue(
     )
     rendered, render_unresolved = _attach_render_bindings(records, grid_assets)
     coverage = {
+        "augmentImplementations": augment_records,
+        "augmentPacks": augment_packs,
+        "collectionAugmentImplementations": len(collection_augment_implementations),
         "collectionMembersByKind": {
             **{kind: len(values) for kind, values in sorted(selected.items())},
-            "augment": augment_records,
+            "augment": augment_packs,
         },
         "records": len(records),
         "recordsByKind": {
@@ -1494,6 +1568,12 @@ def build_planner_catalogue(
             for record in records
             if isinstance(record.get("conditionalDescriptions"), list)
             and bool(record["conditionalDescriptions"])
+        ),
+        "recordsWithStaticStatLines": sum(
+            1
+            for record in records
+            if isinstance(record.get("staticStatLines"), list)
+            and bool(record["staticStatLines"])
         ),
         "recordsMissingDescription": sum(
             1 for record in records if not _has_ui_description(record)
@@ -1550,6 +1630,35 @@ def build_planner_catalogue(
         },
         "sourceFingerprint": source_fingerprint,
         "textContract": {
+            "attachmentDescriptionComposition": {
+                "authoredDescriptionField": "authoredDescription",
+                "conditionalDescriptionField": "conditionalDescriptions",
+                "conditionalStatIndent": ATTACHMENT_DESCRIPTION_CONDITIONAL_STAT_INDENT,
+                "descriptionField": "description",
+                "lineSeparator": ATTACHMENT_DESCRIPTION_LINE_SEPARATOR,
+                "order": [
+                    "authoredDescription",
+                    "staticStatLines",
+                    "conditionalDescriptions",
+                ],
+                "sectionSeparator": ATTACHMENT_DESCRIPTION_SECTION_SEPARATOR,
+                "staticStatField": "staticStatLines",
+            },
+            "augmentDescriptionComposition": {
+                "componentField": "descriptionPanel",
+                "conditionalDescriptionField": "conditionalDescriptions",
+                "conditionalStatIndent": ATTACHMENT_DESCRIPTION_CONDITIONAL_STAT_INDENT,
+                "descriptionField": "description",
+                "lineSeparator": ATTACHMENT_DESCRIPTION_LINE_SEPARATOR,
+                "order": [
+                    "descriptionPanel",
+                    "staticStatLines",
+                    "conditionalDescriptions",
+                ],
+                "panelOrder": list(AUGMENT_DESCRIPTION_PANEL_ORDER),
+                "sectionSeparator": ATTACHMENT_DESCRIPTION_SECTION_SEPARATOR,
+                "staticStatField": "staticStatLines",
+            },
             "conditionalDescriptionField": "conditionalDescriptions",
             "descriptionField": "description",
             "displayNameField": "displayName",

@@ -12,8 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from afe2_catalogue.semantic_assets import (  # noqa: E402
     _character_class_display_icon_packages,
     _chip_visual_family,
+    _effect_definition,
     _import_parent_identity,
     _member_map,
+    _perk_visual_classification,
     _resolve_chip_visual_families,
     apply_semantic_evidence,
     normalize_semantic_document,
@@ -29,8 +31,6 @@ ICON = "/Game/UI/Textures/Avo_OverlockIcons/T_UI_Icon_Overlock_High_Grey-MarketR
 BASE = "/Game/Blueprints/Venus_Weapons/Attachments/Magazines/Avo_BaseMagazine_Tubular"
 WEAPON = "/Game/Blueprints/Venus_Weapons/Guns/Rifles/Venus_Rifle_Auto_M41A2"
 MONDO = "/Game/Blueprints/Venus_Weapons/Guns/Rifles/Venus_Rifle_Auto_HerkMondo"
-MONDO_TRAIT = "/Game/Blueprints/Venus_Weapons/Perks/Mastery/Avo_GunPerk_HerkMondo"
-MONDO_TRAIT_ICON = "/Game/UI/Textures/Avo_TraitIcons/T_UI_Trait_Rifle_Auto_HerkMondo"
 KRAMER_ICON = "/Game/UI/Textures/Avo_Weapons/Icon_Venus_Rifle_Auto_Kramer"
 MONDO_SILHOUETTE = "/Game/UI/Textures/Avo_Weapons/Sil/Icon_Sil_Venus_Rifle_Auto_HerkMondo"
 DEFAULT_PLAYER_CHARACTER = "/Game/Blueprints/Character/DefaultPlayerCharacter"
@@ -242,6 +242,22 @@ def candidate_asset() -> dict[str, object]:
                                         True,
                                         "BoolPropertyData",
                                     ),
+                                    prop(
+                                        "bNormalizePercentForEffectMagnitude",
+                                        False,
+                                        "BoolPropertyData",
+                                    ),
+                                    prop(
+                                        "bEnableApplyToGunsInsteadCheckbox",
+                                        False,
+                                        "BoolPropertyData",
+                                    ),
+                                    prop(
+                                        "bApplyToGunsInstead",
+                                        False,
+                                        "BoolPropertyData",
+                                    ),
+                                    prop("bVisibleOnUI", True, "BoolPropertyData"),
                                 ],
                                 "StructPropertyData",
                             )
@@ -276,7 +292,14 @@ def candidate_asset() -> dict[str, object]:
 def effect_asset() -> dict[str, object]:
     attribute = prop(
         "Attribute",
-        [prop("AttributeName", "TimeToReload", "StrPropertyData")],
+        [
+            prop("AttributeName", "TimeToReload", "StrPropertyData"),
+            prop(
+                "Attribute",
+                {"Path": ["TimeToReload"], "ResolvedOwner": -1},
+                "FieldPathPropertyData",
+            ),
+        ],
         "StructPropertyData",
     )
     magnitude = prop(
@@ -307,7 +330,10 @@ def effect_asset() -> dict[str, object]:
         "packagePath": EFFECT,
         "memberPath": f"AFE2/Content/{EFFECT[6:]}.uasset",
         "engineVersion": "VER_UE4_27",
-        "imports": [],
+        "imports": [
+            {"objectName": "GunGameplayAttributes", "outerIndex": -2},
+            {"objectName": "/Script/Endeavor", "outerIndex": 0},
+        ],
         "exports": [
             {
                 "objectName": "Default__Avo_Weapon_ReloadSpeed_C",
@@ -324,7 +350,312 @@ def effect_asset() -> dict[str, object]:
     }
 
 
+def scalable_effect_asset() -> dict[str, object]:
+    attribute = prop(
+        "Attribute",
+        [
+            prop("AttributeName", "RecoilMultiplier", "StrPropertyData"),
+            prop(
+                "Attribute",
+                {"Path": ["RecoilMultiplier"], "ResolvedOwner": -1},
+                "FieldPathPropertyData",
+            ),
+        ],
+        "StructPropertyData",
+    )
+    scalable_float = prop(
+        "ScalableFloatMagnitude",
+        [
+            prop("Value", 0.800000011920929, "FloatPropertyData"),
+            prop(
+                "Curve",
+                [
+                    prop("CurveTable", 0, "ObjectPropertyData"),
+                    prop("RowName", "None", "NamePropertyData"),
+                ],
+                "StructPropertyData",
+            ),
+        ],
+        "StructPropertyData",
+    )
+    modifier = prop(
+        "Modifiers",
+        [
+            attribute,
+            prop(
+                "ModifierOp",
+                "EGameplayModOp::Multiplicitive",
+                "BytePropertyData",
+                EnumValue="EGameplayModOp::Multiplicitive",
+            ),
+            # This legacy sibling is zero in the cooked assets and is not the
+            # GameplayEffectModifierMagnitude used by the client.
+            prop(
+                "Magnitude",
+                [prop("Value", 0.0, "FloatPropertyData")],
+                "StructPropertyData",
+            ),
+            prop(
+                "ModifierMagnitude",
+                [
+                    prop(
+                        "MagnitudeCalculationType",
+                        "EGameplayEffectMagnitudeCalculation::ScalableFloat",
+                        "EnumPropertyData",
+                    ),
+                    scalable_float,
+                ],
+                "StructPropertyData",
+            ),
+        ],
+        "StructPropertyData",
+    )
+    return {
+        "packagePath": "/Game/Test/Avo_Attachment_Custom_Gun_GE",
+        "imports": [
+            {"objectName": "GunGameplayAttributes", "outerIndex": -2},
+            {"objectName": "/Script/Endeavor", "outerIndex": 0},
+        ],
+        "exports": [
+            {
+                "objectName": "Default__Avo_Attachment_Custom_Gun_GE_C",
+                "data": [prop("Modifiers", [modifier], "ArrayPropertyData")],
+            }
+        ],
+    }
+
+
+def attribute_metadata_asset() -> dict[str, object]:
+    return {
+        "packagePath": "/Game/Design/AttributeMetaData/AttributeMetaData",
+        "memberPath": "AFE2/Content/Design/AttributeMetaData/AttributeMetaData.uasset",
+        "exports": [
+            {
+                "objectName": "AttributeMetaData",
+                "data": [],
+                "table": {
+                    "Data": [
+                        prop(
+                            "13",
+                            [
+                                prop(
+                                    "AttributeName",
+                                    "GunGameplayAttributes.TimeToReload",
+                                    "StrPropertyData",
+                                ),
+                                {
+                                    "Name": "AttributeDisplayName",
+                                    "$type": "TextPropertyData",
+                                    "CultureInvariantString": "Reload Time",
+                                    "HistoryType": "Base",
+                                    "Value": "13_AttributeDisplayName",
+                                },
+                                prop(
+                                    "DisplayType",
+                                    "EComparableStatDisplayType::Time",
+                                    "EnumPropertyData",
+                                ),
+                                prop(
+                                    "ModOp",
+                                    "EComparableStatOperator::Divide",
+                                    "EnumPropertyData",
+                                ),
+                                prop(
+                                    "Sign",
+                                    "EComparableStatSign::LowerIsBetter",
+                                    "EnumPropertyData",
+                                ),
+                                prop("SortOrder", 13, "IntPropertyData"),
+                            ],
+                            "StructPropertyData",
+                        )
+                    ]
+                },
+            }
+        ],
+    }
+
+
 class SemanticNormalizationTests(unittest.TestCase):
+    def test_effect_definition_reads_comparison_stat_ui_override(self) -> None:
+        asset = deepcopy(effect_asset())
+        asset["exports"][0]["data"].append(prop("UIData", 2, "ObjectPropertyData"))
+        asset["exports"].append(
+            {
+                "objectName": "CoreGameplayEffect_OverrideComparisonStat_0",
+                "data": [
+                    prop(
+                        "OverrideDisplayStatTag",
+                        [prop("TagName", "Stats.Combined.Handling", "NamePropertyData")],
+                        "StructPropertyData",
+                    )
+                ],
+            }
+        )
+
+        definition = _effect_definition(asset)
+
+        self.assertEqual(
+            definition["overrideDisplayStatTag"],
+            "Stats.Combined.Handling",
+        )
+        self.assertEqual(
+            definition["overrideDisplayStatTagEvidence"],
+            (
+                "Default__Avo_Weapon_ReloadSpeed_C.UIData -> "
+                "CoreGameplayEffect_OverrideComparisonStat_0."
+                "OverrideDisplayStatTag"
+            ),
+        )
+
+    def test_effect_definition_reads_modifier_scalable_float_magnitude(self) -> None:
+        definition = _effect_definition(scalable_effect_asset())
+
+        self.assertEqual(definition["status"], "parsed")
+        self.assertEqual(
+            definition["modifiers"],
+            [
+                {
+                    "attribute": "RecoilMultiplier",
+                    "attributeOwner": "GunGameplayAttributes",
+                    "evidence": "Modifiers[0]",
+                    "magnitudeCalculationType": "scalablefloat",
+                    "magnitudeCalculationTypeRaw": (
+                        "EGameplayEffectMagnitudeCalculation::ScalableFloat"
+                    ),
+                    "operation": "multiply",
+                    "operationRaw": "EGameplayModOp::Multiplicitive",
+                    "qualifiedAttribute": (
+                        "GunGameplayAttributes.RecoilMultiplier"
+                    ),
+                    "scalableFloatMagnitude": {
+                        "curveRowName": None,
+                        "curveTablePackagePath": None,
+                        "value": 0.8,
+                    },
+                }
+            ],
+        )
+
+    def test_perk_visual_classification_normalizes_serialized_restrictions(self) -> None:
+        classification = _perk_visual_classification(
+            export_name="Default__Perk_Future_C",
+            parent_class_path="/Script/Endeavor.ModChipDef",
+            raw_restriction_type="EModChipRestrictionType::Kit",
+            raw_role_restriction="EClassRole::Technician",
+            role_restriction_export_name="Default__Perk_Future_C",
+        )
+
+        self.assertEqual(
+            classification,
+            {
+                "evidence": {
+                    "property": "Default__Perk_Future_C.RestrictionType",
+                    "roleRestrictionProperty": (
+                        "Default__Perk_Future_C.RoleRestriction"
+                    ),
+                    "source": "serialized-enum",
+                    "valueRaw": "EModChipRestrictionType::Kit",
+                },
+                "restrictionType": "kit",
+                "restrictionTypeRaw": "EModChipRestrictionType::Kit",
+                "roleRestrictionRaw": "EClassRole::Technician",
+                "status": "resolved",
+            },
+        )
+
+    def test_perk_visual_classification_infers_native_none_default(self) -> None:
+        classification = _perk_visual_classification(
+            export_name="Default__Perk_Future_C",
+            parent_class_path="/Script/Endeavor.ModChipDef",
+            raw_restriction_type=None,
+            raw_role_restriction=None,
+            role_restriction_export_name="Default__Perk_Future_C",
+        )
+
+        self.assertEqual(classification["restrictionType"], "none")
+        self.assertEqual(classification["status"], "inferred")
+        self.assertEqual(
+            classification["evidence"]["source"],
+            "native-default-inferred",
+        )
+
+    def test_perk_visual_classification_preserves_unknown_future_enum(self) -> None:
+        classification = _perk_visual_classification(
+            export_name="Default__Perk_Future_C",
+            parent_class_path="/Script/Endeavor.ModChipDef",
+            raw_restriction_type="EModChipRestrictionType::Faction",
+            raw_role_restriction=None,
+            role_restriction_export_name="Default__Perk_Future_C",
+        )
+
+        self.assertEqual(
+            classification["restrictionTypeRaw"],
+            "EModChipRestrictionType::Faction",
+        )
+        self.assertEqual(
+            classification["status"],
+            "unresolved-restriction-type",
+        )
+        self.assertNotIn("restrictionType", classification)
+
+    def test_semantic_perk_record_and_candidate_publish_visual_classification(self) -> None:
+        package = "/Game/Synthetic/Perks/Perk_VisualClassification"
+        asset = {
+            "packagePath": package,
+            "memberPath": f"AFE2/Content/{package[6:]}.uasset",
+            "engineVersion": "VER_UE4_27",
+            "imports": [
+                {"objectName": "ModChipDef", "outerIndex": -2},
+                {"objectName": "/Script/Endeavor", "outerIndex": 0},
+            ],
+            "exports": [
+                {
+                    "objectName": "Perk_VisualClassification_C",
+                    "superIndex": -1,
+                    "data": [],
+                },
+                {
+                    "objectName": "Default__Perk_VisualClassification_C",
+                    "data": [
+                        prop(
+                            "RestrictionType",
+                            "EModChipRestrictionType::Role",
+                            "Objects.EnumPropertyData",
+                        ),
+                        prop(
+                            "RoleRestriction",
+                            "EPlayerRole::Support",
+                            "Objects.EnumPropertyData",
+                        ),
+                    ],
+                },
+            ],
+        }
+        result = normalize_semantic_document(
+            candidates=[{"id": package, "kind": "perk", "packagePath": package}],
+            candidate_assets=[asset],
+            candidate_failures=[],
+            effect_assets=[],
+            dependency_failures=[],
+            icon_metadata=[],
+            icon_bytes={},
+            source_fingerprint="sha256:fixture",
+        )
+        classification = result.document["records"][0]["visualClassification"]
+
+        self.assertEqual(classification["restrictionType"], "role")
+        self.assertEqual(
+            classification["roleRestrictionRaw"],
+            "EPlayerRole::Support",
+        )
+        candidates = {"records": [{"id": package, "kind": "perk"}]}
+        apply_semantic_evidence(candidates=candidates, semantic=result.document)
+        self.assertEqual(
+            candidates["records"][0]["visualClassification"],
+            classification,
+        )
+
     def test_chip_visual_family_uses_serialized_enums_and_native_default(self) -> None:
         modifier = _chip_visual_family(
             export_name="Default__FutureModifier_C",
@@ -821,13 +1152,19 @@ class SemanticNormalizationTests(unittest.TestCase):
             [(1, "minor"), (3, "major")],
         )
 
-    def normalize(self):
+    def normalize(
+        self,
+        source: dict[str, object] | None = None,
+        *,
+        kind: str = "mod",
+    ):
         png = b"\x89PNG\r\n\x1a\nsynthetic"
         return normalize_semantic_document(
-            candidates=[{"id": PRIMING, "kind": "mod", "packagePath": PRIMING}],
-            candidate_assets=[candidate_asset()],
+            candidates=[{"id": PRIMING, "kind": kind, "packagePath": PRIMING}],
+            candidate_assets=[source or candidate_asset()],
             candidate_failures=[],
             effect_assets=[effect_asset()],
+            attribute_metadata_assets=[attribute_metadata_asset()],
             dependency_failures=[],
             icon_metadata=[
                 {
@@ -853,6 +1190,44 @@ class SemanticNormalizationTests(unittest.TestCase):
         self.assertEqual(record["icon"]["path"], "icons/priming--fixture.png")
         self.assertEqual(record["effects"][0]["effectPackagePath"], EFFECT)
         self.assertEqual(record["effects"][0]["configuredMagnitude"], 1.2000000476837158)
+        self.assertEqual(
+            record["effects"][0]["definition"]["modifiers"][0]["qualifiedAttribute"],
+            "GunGameplayAttributes.TimeToReload",
+        )
+        self.assertEqual(
+            result.document["attributeMetadata"],
+            {
+                "packagePath": "/Game/Design/AttributeMetaData/AttributeMetaData",
+                "rows": [
+                    {
+                        "attribute": "GunGameplayAttributes.TimeToReload",
+                        "displayName": "Reload Time",
+                        "displayType": "Time",
+                        "modifierOperation": "Divide",
+                        "result": "LowerIsBetter",
+                        "sortOrder": 13,
+                    }
+                ],
+                "status": "parsed",
+            },
+        )
+        self.assertEqual(result.document["coverage"]["attributeMetadataRows"], 1)
+        self.assertEqual(
+            record["staticStatLines"],
+            [
+                {
+                    "attribute": "GunGameplayAttributes.TimeToReload",
+                    "displayText": "+20.0% Reload Speed",
+                    "displayType": "Percent",
+                    "displayValue": "+20.0%",
+                    "effectPackagePath": EFFECT,
+                    "result": "HigherIsBetter",
+                    "sortOrder": 13,
+                    "statText": "Reload Speed",
+                    "statValue": 20.0,
+                }
+            ],
+        )
 
         stat = record["stats"][0]
         self.assertEqual(stat["expression"], "TimeToReload / 1.2")
@@ -863,6 +1238,61 @@ class SemanticNormalizationTests(unittest.TestCase):
         self.assertEqual(stat["derived"]["timeReductionPercent"], 16.666667)
         self.assertNotIn("Attachment_PrimingMagazine", json.dumps(record))
         self.assertNotIn("Priming Magazine", json.dumps(record))
+
+    def test_augment_candidates_receive_player_facing_static_stat_lines(self) -> None:
+        result = self.normalize(kind="augment")
+        record = result.document["records"][0]
+
+        self.assertEqual(record["kind"], "augment")
+        self.assertEqual(
+            [line["displayText"] for line in record["staticStatLines"]],
+            ["+20.0% Reload Speed"],
+        )
+        self.assertEqual(result.document["coverage"]["recordsWithStaticStatLines"], 1)
+
+    def test_preserves_short_and_flavor_text_with_explicit_nulls_and_evidence(self) -> None:
+        source = deepcopy(candidate_asset())
+        default_export = next(
+            export
+            for export in source["exports"]
+            if export["objectName"].startswith("Default__")
+        )
+        default_export["data"].extend(
+            [
+                localized_text(
+                    "DescriptionShort",
+                    "Target chill duration increased.",
+                ),
+                localized_text("FlavorText", None),
+            ]
+        )
+
+        result = self.normalize(source)
+        record = result.document["records"][0]
+
+        self.assertEqual(
+            record["descriptionShort"],
+            "Target chill duration increased.",
+        )
+        self.assertEqual(
+            record["descriptionShortEvidence"],
+            "Default__Avo_Magazine_Tubular_Priming_C.DescriptionShort",
+        )
+        self.assertIn("flavorText", record)
+        self.assertIsNone(record["flavorText"])
+        self.assertEqual(
+            record["flavorTextEvidence"],
+            "Default__Avo_Magazine_Tubular_Priming_C.FlavorText",
+        )
+
+        candidates = {
+            "records": [{"id": PRIMING, "kind": "mod", "packagePath": PRIMING}]
+        }
+        apply_semantic_evidence(candidates=candidates, semantic=result.document)
+        enriched = candidates["records"][0]
+        self.assertEqual(enriched["descriptionShort"], record["descriptionShort"])
+        self.assertIn("flavorText", enriched)
+        self.assertIsNone(enriched["flavorText"])
 
     def test_conditional_mod_descriptions_preserve_authored_ui_groups(self) -> None:
         source = deepcopy(candidate_asset())
@@ -1255,7 +1685,7 @@ class SemanticNormalizationTests(unittest.TestCase):
                     1,
                 )
 
-    def test_mondo_uses_trait_icon_fallback_and_keeps_weapon_silhouette(self) -> None:
+    def test_mondo_trusts_serialized_misnamed_icon_and_keeps_silhouette(self) -> None:
         weapon_asset = {
             "packagePath": MONDO,
             "memberPath": f"AFE2/Content/{MONDO[6:]}.uasset",
@@ -1285,35 +1715,17 @@ class SemanticNormalizationTests(unittest.TestCase):
                 }
             ],
         }
-        trait_asset = {
-            "packagePath": MONDO_TRAIT,
-            "memberPath": f"AFE2/Content/{MONDO_TRAIT[6:]}.uasset",
-            "engineVersion": "VER_UE4_27",
-            "imports": [
-                {"objectName": MONDO_TRAIT_ICON, "outerIndex": 0},
-                {"objectName": "T_UI_Trait_Rifle_Auto_HerkMondo", "outerIndex": -1},
-            ],
-            "exports": [
-                {
-                    "objectName": "Default__Avo_GunPerk_HerkMondo_C",
-                    "data": [prop("Icon", [prop("ResourceObject", -2)], "StructPropertyData")],
-                }
-            ],
-        }
         result = normalize_semantic_document(
-            candidates=[
-                {"id": MONDO, "kind": "weapon", "packagePath": MONDO},
-                {"id": MONDO_TRAIT, "kind": "trait", "packagePath": MONDO_TRAIT},
-            ],
-            candidate_assets=[weapon_asset, trait_asset],
+            candidates=[{"id": MONDO, "kind": "weapon", "packagePath": MONDO}],
+            candidate_assets=[weapon_asset],
             candidate_failures=[],
             effect_assets=[],
             dependency_failures=[],
             icon_metadata=[
                 {
-                    "packagePath": MONDO_TRAIT_ICON,
-                    "outputName": "mondo-trait.png",
-                    "width": 256,
+                    "packagePath": KRAMER_ICON,
+                    "outputName": "mondo-gun.png",
+                    "width": 512,
                     "height": 256,
                     "pixelFormat": "PF_DXT5",
                 },
@@ -1326,110 +1738,20 @@ class SemanticNormalizationTests(unittest.TestCase):
                 },
             ],
             icon_bytes={
-                "mondo-trait.png": b"\x89PNG\r\n\x1a\ntrait",
+                "mondo-gun.png": b"\x89PNG\r\n\x1a\ngun",
                 "mondo-silhouette.png": b"\x89PNG\r\n\x1a\nsilhouette",
             },
             source_fingerprint="sha256:fixture",
         )
 
         record = next(item for item in result.document["records"] if item["id"] == MONDO)
-        self.assertEqual(record["serializedIcon"]["packagePath"], KRAMER_ICON)
-        self.assertEqual(record["icon"]["packagePath"], MONDO_TRAIT_ICON)
-        self.assertEqual(record["icon"]["fallback"]["sourceRecordId"], MONDO_TRAIT)
-        self.assertEqual(record["icon"]["path"], "icons/mondo-trait.png")
-        self.assertEqual(record["silhouetteIcon"]["packagePath"], MONDO_SILHOUETTE)
-        self.assertEqual(record["silhouetteIcon"]["path"], "icons/mondo-silhouette.png")
-
-    def test_mondo_future_dedicated_gun_icon_wins_over_trait_fallback(self) -> None:
-        dedicated_icon = "/Game/UI/Textures/Avo_Weapons/Icon_Venus_Rifle_Auto_HerkMondo"
-        weapon_asset = {
-            "packagePath": MONDO,
-            "memberPath": f"AFE2/Content/{MONDO[6:]}.uasset",
-            "engineVersion": "VER_UE4_27",
-            "imports": [
-                {"objectName": dedicated_icon, "outerIndex": 0},
-                {
-                    "objectName": dedicated_icon.rsplit("/", 1)[-1],
-                    "outerIndex": -1,
-                },
-            ],
-            "exports": [
-                {
-                    "objectName": "Default__Venus_Rifle_Auto_HerkMondo_C",
-                    "data": [
-                        prop(
-                            "Attributes",
-                            [
-                                prop(
-                                    "UIVisuals",
-                                    [prop("GunIcon", -2)],
-                                    "StructPropertyData",
-                                )
-                            ],
-                            "StructPropertyData",
-                        )
-                    ],
-                }
-            ],
-        }
-        trait_asset = {
-            "packagePath": MONDO_TRAIT,
-            "memberPath": f"AFE2/Content/{MONDO_TRAIT[6:]}.uasset",
-            "engineVersion": "VER_UE4_27",
-            "imports": [
-                {"objectName": MONDO_TRAIT_ICON, "outerIndex": 0},
-                {
-                    "objectName": MONDO_TRAIT_ICON.rsplit("/", 1)[-1],
-                    "outerIndex": -1,
-                },
-            ],
-            "exports": [
-                {
-                    "objectName": "Default__Avo_GunPerk_HerkMondo_C",
-                    "data": [
-                        prop("Icon", [prop("ResourceObject", -2)], "StructPropertyData")
-                    ],
-                }
-            ],
-        }
-        result = normalize_semantic_document(
-            candidates=[
-                {"id": MONDO, "kind": "weapon", "packagePath": MONDO},
-                {"id": MONDO_TRAIT, "kind": "trait", "packagePath": MONDO_TRAIT},
-            ],
-            candidate_assets=[weapon_asset, trait_asset],
-            candidate_failures=[],
-            effect_assets=[],
-            dependency_failures=[],
-            icon_metadata=[
-                {
-                    "packagePath": dedicated_icon,
-                    "outputName": "mondo-dedicated.png",
-                    "width": 1024,
-                    "height": 512,
-                    "pixelFormat": "PF_DXT5",
-                },
-                {
-                    "packagePath": MONDO_TRAIT_ICON,
-                    "outputName": "mondo-trait.png",
-                    "width": 256,
-                    "height": 256,
-                    "pixelFormat": "PF_DXT5",
-                },
-            ],
-            icon_bytes={
-                "mondo-dedicated.png": b"\x89PNG\r\n\x1a\ndedicated",
-                "mondo-trait.png": b"\x89PNG\r\n\x1a\ntrait",
-            },
-            source_fingerprint="sha256:fixture",
-        )
-
-        record = next(item for item in result.document["records"] if item["id"] == MONDO)
-        self.assertEqual(record["icon"]["packagePath"], dedicated_icon)
-        self.assertEqual(record["icon"]["path"], "icons/mondo-dedicated.png")
+        self.assertEqual(record["icon"]["packagePath"], KRAMER_ICON)
+        self.assertEqual(record["icon"]["path"], "icons/mondo-gun.png")
         self.assertTrue(record["icon"]["referenceEvidence"].endswith(".GunIcon"))
         self.assertNotIn("fallback", record["icon"])
         self.assertNotIn("serializedIcon", record)
+        self.assertEqual(record["silhouetteIcon"]["packagePath"], MONDO_SILHOUETTE)
+        self.assertEqual(record["silhouetteIcon"]["path"], "icons/mondo-silhouette.png")
 
     def test_kit_icon_prefers_character_class_cdo_and_has_unlock_fallback(self) -> None:
         preferred_kit = "/Game/Synthetic/Kits/KitUnlock_Future"

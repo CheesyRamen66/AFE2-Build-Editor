@@ -7,6 +7,7 @@ import {
   type BuildState,
 } from "../model/build";
 import {
+  attachmentSlotDisplayName,
   weaponSlotDisplayName,
   type CatalogueIndex,
   type ComponentSlot,
@@ -154,7 +155,8 @@ export function WeaponLoadout({
                   const record = selectedId ? index.byId.get(selectedId) : undefined;
                   const attachmentChoiceKey = `attachment:${kitSlot.index}:${key}`;
                   const attachmentTooltipId = `attachment-tooltip-${kitSlot.index}-${slot.kind}-${slot.index}`;
-                  const tooltipName = record?.displayName ?? slot.displayName;
+                  const attachmentSlotName = attachmentSlotDisplayName(slot);
+                  const tooltipName = record?.displayName ?? attachmentSlotName;
                   const tooltipDescription = record
                     ? plainGameText(record.description) || "No attachment description available."
                     : "No attachment selected.";
@@ -176,14 +178,14 @@ export function WeaponLoadout({
                       aria-describedby={activeTooltip === attachmentChoiceKey
                         ? attachmentTooltipId
                         : undefined}
-                      aria-label={`${slot.displayName}: ${record?.displayName ?? "empty"}. Choose attachment.`}
+                      aria-label={`${attachmentSlotName}: ${record?.displayName ?? "empty"}. Choose attachment.`}
                     >
                       <span className="attachment-slot__icon">
                         {record ? <RecordVisual record={record} /> : <Plus size={18} />}
                       </span>
                       <span className="attachment-slot__copy">
-                        <small>{slot.displayName}</small>
-                        <strong>{record?.displayName ?? "Choose"}</strong>
+                        <small>{attachmentSlotName}</small>
+                        {record && <strong>{record.displayName}</strong>}
                       </span>
                       {activeTooltip === attachmentChoiceKey && (
                         <LoadoutTooltip

@@ -117,7 +117,9 @@ describe("WeaponLoadout", () => {
     const emptyMagazine = within(signatureCard).getByRole("button", {
       name: "Magazine: empty. Choose attachment.",
     });
-    fireEvent.click(within(emptyMagazine).getByText("Choose"));
+    // An empty slot shows only its name now, so the tile itself is the target.
+    expect(within(emptyMagazine).queryByText("Choose")).toBeNull();
+    fireEvent.click(emptyMagazine);
     expect(onChooseAttachment).toHaveBeenCalledWith(
       1,
       weapon,

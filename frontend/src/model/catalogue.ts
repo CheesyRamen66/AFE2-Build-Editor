@@ -105,6 +105,26 @@ export function weaponSlotDisplayName(
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+/**
+ * The game serializes attachment slot names both abbreviated and spelled out —
+ * "Int Magazine" on thirteen weapons and "Internal Magazine" on three, the same
+ * split for Sml/Small, Med/Medium and Lrg/Large. Editor labels use the
+ * spelled-out form the catalogue itself already attests.
+ */
+const ATTACHMENT_SIZE_WORDS: Record<string, string> = {
+  int: "Internal",
+  lrg: "Large",
+  med: "Medium",
+  sml: "Small",
+};
+
+export function attachmentSlotDisplayName(slot: { displayName: string }): string {
+  return slot.displayName
+    .split(/\s+/)
+    .map((word) => ATTACHMENT_SIZE_WORDS[word.toLocaleLowerCase()] ?? word)
+    .join(" ");
+}
+
 export interface KitRecord extends CatalogueRecordBase {
   kind: "kit";
   abilitySlots: AbilitySlot[];

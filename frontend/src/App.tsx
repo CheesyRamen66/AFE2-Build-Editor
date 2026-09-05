@@ -15,6 +15,7 @@ import {
   type BuildState,
 } from "./model/build";
 import {
+  attachmentSlotDisplayName,
   weaponSlotDisplayName,
   type AbilitySlot,
   type CatalogueIndex,
@@ -137,13 +138,14 @@ export function BuildEditor({ index }: { index: CatalogueIndex }) {
     selectedId: string | null,
   ) => {
     const attachmentKey = attachmentSlotKey(slot);
+    const slotName = attachmentSlotDisplayName(slot);
     setPicker({
       eyebrow: `${weapon.displayName} · ${slot.kind}`,
-      title: `Choose ${slot.displayName}`,
+      title: `Choose ${slotName}`,
       records: recordsFor(index, slot.compatibleIds),
       selectedId,
       allowEmpty: true,
-      emptyLabel: `No ${slot.displayName}`,
+      emptyLabel: `No ${slotName}`,
       onSelect: (recordId) => {
         dispatch({
           type: "select-attachment",
@@ -151,7 +153,7 @@ export function BuildEditor({ index }: { index: CatalogueIndex }) {
           attachmentKey,
           recordId,
         });
-        notify(recordId ? `${slot.displayName} selected.` : `${slot.displayName} cleared.`);
+        notify(recordId ? `${slotName} selected.` : `${slotName} cleared.`);
         setPicker(null);
       },
     });

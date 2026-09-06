@@ -301,8 +301,7 @@ select:focus-visible {
   display: grid;
   grid-template-columns: minmax(176px, 210px) minmax(0, 1fr);
   gap: 12px;
-  padding: 16px 0 38px;
-  border-bottom: 1px solid var(--line);
+  padding: 16px 0 19px;
 }
 
 .editor-stage > #perks {
@@ -1330,7 +1329,7 @@ select:focus-visible {
   grid-template-columns: minmax(0, 3fr) minmax(260px, 1fr);
   align-items: stretch;
   gap: 14px;
-  padding: 38px 0 52px;
+  padding: 19px 0 52px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -2232,7 +2231,6 @@ footer {
 
 .editor-stage {
   position: relative;
-  border-bottom-color: rgba(240, 112, 16, 0.26);
 }
 
 .kit-section,
@@ -2694,22 +2692,7 @@ footer {
 }
 
 .loadout-row {
-  position: relative;
   border-bottom-color: rgba(240, 112, 16, 0.25);
-}
-
-.loadout-row::before {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 5px;
-  content: "";
-  pointer-events: none;
-  background:
-    linear-gradient(90deg, var(--ui-accent-bright) 0 11%, transparent 11% 12%, rgba(240, 112, 16, 0.38) 12% 41%, transparent 41% 42%, rgba(240, 112, 16, 0.38) 42% 71%, transparent 71% 72%, var(--ui-accent-bright) 72% 100%) top / 100% 2px no-repeat,
-    repeating-linear-gradient(90deg, rgba(240, 112, 16, 0.3) 0 3px, transparent 3px 10px) bottom / 100% 1px no-repeat;
-  filter: drop-shadow(0 0 4px rgba(240, 112, 16, 0.15));
 }
 
 .weapon-card,
@@ -2781,15 +2764,6 @@ footer {
 
 .weapon-card__slot strong {
   color: #ff861c;
-}
-
-.weapon-card__slot::before {
-  width: 10px;
-  height: 2px;
-  margin-right: 8px;
-  content: "";
-  background: var(--amber-hot);
-  box-shadow: 0 4px var(--ui-accent);
 }
 
 .weapon-card__hero > .record-visual {
@@ -3431,7 +3405,7 @@ footer::before {
   .editor-stage {
     grid-template-columns: minmax(0, 1fr);
     gap: 14px;
-    padding: 16px 0 40px;
+    padding: 16px 0 20px;
   }
 
   .kit-section {

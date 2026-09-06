@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 
 test("builds a local kit, perk, weapon, and item loadout", async ({ page }) => {
   const consoleErrors: string[] = [];
@@ -112,6 +112,17 @@ test("builds a local kit, perk, weapon, and item loadout", async ({ page }) => {
   await expect(itemCards.nth(1)).toHaveAttribute("aria-label", /Major item: empty/i);
   await expect(itemCards.locator(".item-card__visual > .lucide-plus")).toHaveCount(2);
 
+  // One pip per attachment socket, one per item slot, each lit only when filled.
+  const pipsLit = (card: Locator) => card
+    .locator(".weapon-card__pip")
+    .evaluateAll((pips) => pips.map((pip) => pip.classList.contains("is-filled")));
+  for (const index of [0, 1, 2]) {
+    await expect(weaponCards.nth(index).locator(".weapon-card__pip")).toHaveCount(5);
+    expect(await pipsLit(weaponCards.nth(index))).toEqual([false, false, false, false, false]);
+  }
+  await expect(itemCards.nth(0)).not.toHaveClass(/is-filled/);
+  await expect(itemCards.nth(1)).not.toHaveClass(/is-filled/);
+
   const firstWeapon = page.locator(".weapon-card").first();
   const emptyTrait = firstWeapon.getByRole("button", { name: /Trait: empty/i });
   await expect(emptyTrait).toHaveAttribute("aria-label", /Trait: empty/i);
@@ -158,6 +169,8 @@ test("builds a local kit, perk, weapon, and item loadout", async ({ page }) => {
   );
   await attachmentChoice.click();
   await expect(firstSocket).toHaveClass(/is-filled/);
+  // Only the pip for the socket that was just filled lights up.
+  expect(await pipsLit(firstWeapon)).toEqual([true, false, false, false, false]);
   await firstSocket.hover();
   await expect(page.getByRole("tooltip").locator("span")).toHaveCSS("white-space", "pre-wrap");
 
@@ -290,15 +303,22 @@ test("hover shortcuts filter, rotate, remove, and reset against game catalogue I
   const countedPerkSearch = page.getByRole("searchbox", { name: /Search \d+ perks/ });
   await expect(countedPerkSearch).toHaveAttribute("placeholder", `Search ${availableCount} perks`);
   await expect(page.getByRole("button", { name: "Show more perks" })).toHaveCount(0);
+  // The card frame is shared page furniture, so it stays identical across tones;
+  // only the icon well carries the chip colour that matches the perk on the board.
   for (const tone of ["green", "blue"]) {
     const item = page.locator(`.perk-list-item[data-well-tone="${tone}"]`).first();
     await expect(item).toBeVisible();
     await expect(item).toHaveAttribute("data-card-tone", "orange");
-    await expect(item).toHaveCSS("color", "rgb(255, 255, 255)");
-    await expect(item).toHaveCSS("border-top-color", "rgba(255, 255, 255, 0.38)");
-    await expect(item.locator(".record-visual")).toHaveCSS("color", "rgb(255, 255, 255)");
-    await expect(item.locator(".perk-state")).toHaveCSS("color", "rgb(255, 255, 255)");
+    await expect(item).toHaveCSS("color", "rgb(240, 234, 220)");
+    await expect(item).toHaveCSS("border-top-color", "rgba(240, 112, 16, 0.34)");
+    await expect(item.locator(".record-visual")).toHaveCSS("color", "rgb(240, 234, 220)");
+    await expect(item.locator(".perk-state")).toHaveCSS("color", "rgb(255, 246, 232)");
   }
+  const wellBorder = (tone: string) => page
+    .locator(`.perk-list-item[data-well-tone="${tone}"] .record-visual`)
+    .first()
+    .evaluate((element) => getComputedStyle(element).borderTopColor);
+  expect(await wellBorder("green")).not.toBe(await wellBorder("blue"));
   const secondaryAbility = page.locator(".ability-anchor--secondary");
   await expect(secondaryAbility).toHaveAttribute("aria-label", /Shrapnel Grenade/);
   await expect(secondaryAbility.getByText("Shrapnel Grenade", { exact: true })).toHaveCount(0);
@@ -385,11 +405,18 @@ test("hover shortcuts filter, rotate, remove, and reset against game catalogue I
   const firstUnfulfilledPerk = page.locator(
     '.perk-list-item[data-dependency-status="unfulfilled"]',
   ).first();
-  await expect(firstUnfulfilledPerk).toHaveCSS("color", "rgb(255, 255, 255)");
-  await expect(firstUnfulfilledPerk).toHaveCSS(
-    "border-top-color",
-    "rgba(255, 255, 255, 0.38)",
+  // An unfulfilled perk reads as dimmed against a ready one, not as a different colour.
+  const rowStyle = (row: Locator) => row.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.color, border: style.borderTopColor };
+  });
+  const unfulfilledStyle = await rowStyle(firstUnfulfilledPerk);
+  const readyStyle = await rowStyle(
+    page.locator('.perk-list-item[data-dependency-status="ready"]').first(),
   );
+  expect(unfulfilledStyle.color).toBe("rgb(184, 175, 160)");
+  expect(readyStyle.color).toBe("rgb(240, 234, 220)");
+  expect(unfulfilledStyle.border).not.toBe(readyStyle.border);
   await expect(firstUnfulfilledPerk).toHaveAttribute("data-card-tone", "gray");
   await expect(firstUnfulfilledPerk).toHaveAttribute("data-well-tone", "red");
 

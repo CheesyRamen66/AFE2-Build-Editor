@@ -631,40 +631,29 @@ select:focus-visible {
 
 .perk-list-item {
   --perk-library-card: var(--ui-accent);
+  position: relative;
   display: grid;
   grid-template-columns: 45px minmax(0, 1fr) auto;
   align-items: center;
   min-height: 58px;
   gap: 10px;
   padding: 7px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.38);
-  color: #fff;
+  border: 1px solid var(--line);
+  color: var(--ink);
   text-align: left;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--perk-library-card) 34%, #080e10),
-    color-mix(in srgb, var(--perk-library-card) 16%, #080e10)
-  );
+  background: rgba(255, 255, 255, 0.022);
   cursor: grab;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
 }
 
 .perk-list-item:hover {
-  border-color: rgba(255, 255, 255, 0.72);
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--perk-library-card) 44%, #080e10),
-    color-mix(in srgb, var(--perk-library-card) 23%, #080e10)
-  );
+  border-color: rgba(217, 123, 38, 0.58);
+  background: rgba(184, 91, 24, 0.055);
 }
 
 .perk-list-item.is-pending {
-  border-color: rgba(255, 255, 255, 0.9);
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--perk-library-card) 52%, #080e10),
-    color-mix(in srgb, var(--perk-library-card) 28%, #080e10)
-  );
+  border-color: rgba(217, 123, 38, 0.74);
+  background: rgba(184, 91, 24, 0.12);
 }
 
 .perk-list-item.is-placed {
@@ -672,32 +661,20 @@ select:focus-visible {
 }
 
 .perk-list-item.is-unfulfilled {
-  --perk-library-card: #818582;
-  border-color: rgba(255, 255, 255, 0.38);
-  color: #fff;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--perk-library-card) 30%, #080e10),
-    color-mix(in srgb, var(--perk-library-card) 12%, #080e10)
-  );
-}
-
-.perk-list-item.is-unfulfilled:hover {
-  border-color: rgba(255, 255, 255, 0.72);
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--perk-library-card) 38%, #080e10),
-    color-mix(in srgb, var(--perk-library-card) 18%, #080e10)
-  );
+  --perk-library-card: #7c817d;
+  color: var(--muted);
 }
 
 .perk-list-item .record-visual {
   width: 43px;
   height: 43px;
   object-fit: contain;
-  border: 1px solid rgba(255, 255, 255, 0.52);
-  color: #fff;
-  background: color-mix(in srgb, var(--perk-library-well, #8acaf8) 38%, #080e10);
+  border: 1px solid color-mix(in srgb, var(--perk-library-well, #8acaf8) 58%, #020809);
+  color: var(--ink);
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--perk-library-well, #8acaf8) 16%, transparent), transparent 68%),
+    #020809;
+  clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 7px, 100% calc(100% - 7px), calc(100% - 7px) 100%, 7px 100%, 0 calc(100% - 7px), 0 7px);
 }
 
 .perk-list-item__copy {
@@ -716,10 +693,15 @@ select:focus-visible {
 }
 
 .perk-list-item__copy small {
-  color: #fff;
-  font-size: 0.59rem;
-  letter-spacing: 0.05em;
+  color: var(--ui-accent-bright);
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+.perk-list-item.is-unfulfilled .perk-list-item__copy small {
+  color: var(--muted-2);
 }
 
 .perk-state {
@@ -728,27 +710,18 @@ select:focus-visible {
   height: 24px;
   padding: 0 4px;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.52);
-  color: #fff;
-  background: color-mix(in srgb, var(--perk-library-well, #8acaf8) 42%, #080e10);
-  font-family: ui-monospace, monospace;
+  border: 1px solid color-mix(in srgb, var(--perk-library-well, #8acaf8) 52%, #020809);
+  color: var(--ink);
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--perk-library-well, #8acaf8) 18%, transparent), transparent 70%),
+    #020809;
+  font-family: var(--font-terminal);
   font-size: 0.55rem;
-}
-
-.perk-state--core {
-  border-color: rgba(255, 255, 255, 0.52);
-  color: #fff;
-}
-
-.perk-state--modifier {
-  border-color: rgba(255, 255, 255, 0.52);
-  color: #fff;
+  clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
 }
 
 .perk-state--unfulfilled {
   min-width: 43px;
-  border-color: rgba(255, 255, 255, 0.52);
-  color: #fff;
 }
 
 .board-panel {
@@ -1407,14 +1380,24 @@ select:focus-visible {
   cursor: pointer;
 }
 
-.weapon-card__hero::after {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 90px;
-  height: 2px;
-  content: "";
-  background: var(--ui-accent-bright);
+/* One pip per attachment socket; lit only while that socket is populated. */
+.weapon-card__pips {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 5px;
+  padding: 0 17px 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.weapon-card__pip {
+  height: 3px;
+  background: var(--pip-empty, rgba(240, 112, 16, 0.3));
+  transition: background 150ms ease, box-shadow 150ms ease;
+}
+
+.weapon-card__pip.is-filled {
+  background: var(--pip-filled, var(--ui-accent-bright));
 }
 
 .weapon-card__hero:hover .weapon-card__name {
@@ -1630,15 +1613,16 @@ select:focus-visible {
   transition: border-color 150ms ease, background 150ms ease;
 }
 
+/* A single pip per item slot, lit only while that slot holds an item. */
 .item-card::after {
   position: absolute;
-  right: 0;
+  right: 13px;
   bottom: 0;
-  width: 50px;
-  height: 2px;
+  width: 114px;
+  height: 3px;
   content: "";
-  background: var(--muted-2);
-  transition: width 150ms ease, background 150ms ease;
+  background: var(--pip-empty, rgba(240, 112, 16, 0.3));
+  transition: background 150ms ease, box-shadow 150ms ease;
 }
 
 .item-card:hover {
@@ -1646,10 +1630,8 @@ select:focus-visible {
   background: var(--surface-2);
 }
 
-.item-card:hover::after,
 .item-card.is-filled::after {
-  width: 90px;
-  background: var(--ui-accent-bright);
+  background: var(--pip-filled, var(--ui-accent-bright));
 }
 
 .item-card__visual {
@@ -2482,75 +2464,82 @@ footer {
 }
 
 .perk-list-item {
+  border-color: rgba(240, 112, 16, 0.34);
   background:
-    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.035) 3px 4px),
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--perk-library-card) 48%, #160a05),
-      color-mix(in srgb, var(--perk-library-card) 22%, #080d0e)
-    );
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.025) 3px 4px),
+    linear-gradient(90deg, rgba(240, 112, 16, 0.14), rgba(68, 29, 7, 0.05) 58%, rgba(20, 62, 58, 0.055)),
+    #061011;
   box-shadow:
-    inset 3px 0 color-mix(in srgb, var(--perk-library-card) 72%, white 8%),
-    inset 0 1px rgba(255, 255, 255, 0.1),
-    inset 0 -2px rgba(0, 0, 0, 0.58),
-    0 4px 8px rgba(0, 0, 0, 0.22);
+    inset 3px 0 color-mix(in srgb, var(--perk-library-card) 76%, transparent),
+    inset 0 1px rgba(255, 235, 204, 0.045),
+    inset 0 -2px rgba(0, 0, 0, 0.55);
 }
 
 .perk-list-item:hover,
 .perk-list-item.is-pending {
-  border-color: rgba(255, 255, 255, 0.9);
+  border-color: var(--amber-hot);
   background:
-    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.05) 3px 4px),
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--perk-library-card) 62%, #160a05),
-      color-mix(in srgb, var(--perk-library-card) 31%, #080d0e)
-    );
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.04) 3px 4px),
+    linear-gradient(90deg, rgba(240, 112, 16, 0.25), rgba(72, 32, 8, 0.09) 58%, rgba(31, 83, 77, 0.07)),
+    #071213;
   box-shadow:
-    inset 4px 0 color-mix(in srgb, var(--perk-library-card) 78%, white 10%),
-    inset 0 1px rgba(255, 255, 255, 0.14),
-    inset 0 -2px rgba(0, 0, 0, 0.5),
-    0 0 12px color-mix(in srgb, var(--perk-library-card) 17%, transparent);
+    inset 5px 0 color-mix(in srgb, var(--perk-library-card) 92%, white 8%),
+    inset 0 0 0 2px rgba(255, 134, 28, 0.14),
+    inset 0 -2px rgba(0, 0, 0, 0.48),
+    0 0 13px rgba(240, 112, 16, 0.09);
 }
 
-.perk-list-item.is-unfulfilled,
-.perk-list-item.is-unfulfilled:hover {
+.perk-list-item.is-unfulfilled {
+  border-color: rgba(240, 112, 16, 0.2);
   background:
-    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.024) 3px 4px),
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--perk-library-card) 31%, #0b0f10),
-      color-mix(in srgb, var(--perk-library-card) 13%, #070b0c)
-    );
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.018) 3px 4px),
+    linear-gradient(90deg, rgba(240, 112, 16, 0.05), rgba(9, 14, 15, 0.4) 58%),
+    #050c0d;
   box-shadow:
     inset 3px 0 rgba(154, 158, 155, 0.42),
-    inset 0 1px rgba(255, 255, 255, 0.055),
+    inset 0 1px rgba(255, 255, 255, 0.04),
     inset 0 -2px rgba(0, 0, 0, 0.6);
+}
+
+.perk-list-item.is-unfulfilled:hover {
+  border-color: rgba(240, 112, 16, 0.42);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.03) 3px 4px),
+    linear-gradient(90deg, rgba(240, 112, 16, 0.11), rgba(11, 17, 18, 0.4) 58%),
+    #061011;
+  box-shadow:
+    inset 5px 0 rgba(178, 182, 179, 0.6),
+    inset 0 1px rgba(255, 255, 255, 0.055),
+    inset 0 -2px rgba(0, 0, 0, 0.52);
 }
 
 .perk-list-item .record-visual,
 .perk-state {
   box-shadow:
-    inset 0 0 0 2px #020809,
+    inset 0 0 0 2px #020607,
+    inset 0 0 0 3px color-mix(in srgb, var(--perk-library-well, #8acaf8) 17%, transparent),
     inset 0 0 12px rgba(0, 0, 0, 0.72),
-    0 0 8px color-mix(in srgb, var(--perk-library-well, #8acaf8) 20%, transparent);
+    0 0 8px color-mix(in srgb, var(--perk-library-well, #8acaf8) 12%, transparent);
 }
 
 .perk-list-item__copy strong {
-  color: #fff8ed;
+  color: #fff6e8;
+  font-family: var(--font-display);
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.84);
 }
 
+.perk-list-item.is-unfulfilled .perk-list-item__copy strong {
+  color: #cdc7bb;
+}
+
 .perk-list-item__copy small {
-  color: rgba(255, 255, 255, 0.88);
   font-family: var(--font-terminal);
 }
 
 .perk-state {
-  color: #fff;
-  background:
-    repeating-linear-gradient(0deg, transparent 0 3px, rgba(255, 255, 255, 0.04) 3px 4px),
-    color-mix(in srgb, var(--perk-library-well, #8acaf8) 34%, #020809);
+  color: #fff6e8;
 }
 
 .board-panel {
@@ -2774,18 +2763,20 @@ footer {
     inset 0 1px rgba(255, 233, 201, 0.055);
 }
 
-.weapon-card__hero::after {
-  right: 16px;
-  left: 16px;
-  width: auto;
-  height: 3px;
-  background: repeating-linear-gradient(
-    90deg,
-    var(--amber-hot) 0 56px,
-    var(--ui-accent) 56px 59px,
-    transparent 59px 64px
-  );
-  box-shadow: 0 0 7px rgba(240, 112, 16, 0.2);
+.weapon-card__pips {
+  border-bottom-color: rgba(240, 112, 16, 0.33);
+}
+
+.weapon-card__pip {
+  background: rgba(240, 112, 16, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+
+.weapon-card__pip.is-filled {
+  background: linear-gradient(180deg, var(--amber-hot), var(--ui-accent));
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.42),
+    0 0 7px rgba(240, 112, 16, 0.34);
 }
 
 .weapon-card__slot strong {
@@ -2897,16 +2888,10 @@ footer {
 }
 
 .item-card::after {
-  right: 13px;
   bottom: 10px;
   z-index: 2;
-  width: 92px;
-  height: 3px;
-  background: repeating-linear-gradient(
-    90deg,
-    var(--ui-accent) 0 20px,
-    transparent 20px 24px
-  );
+  background: rgba(240, 112, 16, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.55);
 }
 
 .item-card:hover,
@@ -2923,16 +2908,11 @@ footer {
     0 10px 24px rgba(0, 0, 0, 0.46);
 }
 
-.item-card:hover::after,
-.item-card:focus-visible::after,
 .item-card.is-filled::after {
-  width: 124px;
-  background: repeating-linear-gradient(
-    90deg,
-    var(--amber-hot) 0 26px,
-    var(--ui-accent) 26px 29px,
-    transparent 29px 33px
-  );
+  background: linear-gradient(180deg, var(--amber-hot), var(--ui-accent));
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.42),
+    0 0 7px rgba(240, 112, 16, 0.34);
 }
 
 .item-card__visual {

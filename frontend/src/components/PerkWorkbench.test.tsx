@@ -458,6 +458,52 @@ describe("PerkWorkbench pickup interaction", () => {
     expect(dispatch).toHaveBeenCalledWith({ type: "remove-perk", perkId: "perk-bar" });
     expect(screen.queryByTestId("perk-cursor-preview")).not.toBeInTheDocument();
   });
+
+  it("discards a held library brick when the click lands away from the grid", () => {
+    const { dispatch } = renderWorkbench();
+    mockGridGeometry();
+    const perk = screen.getByRole("button", { name: "Pick up Bar Perk for placement" });
+    fireEvent.click(perk, { clientX: 700, clientY: 120 });
+    expect(perk).toHaveClass("is-pending");
+
+    fireEvent.click(window, { clientX: 700, clientY: 600 });
+
+    expect(perk).not.toHaveClass("is-pending");
+    expect(screen.queryByTestId("perk-cursor-preview")).not.toBeInTheDocument();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("removes a held installed brick when the click lands away from the grid", () => {
+    const { dispatch } = renderWorkbench({
+      perks: [{ perkId: "perk-bar", row: 1, column: 0, rotation: "Default" }],
+    });
+    mockGridGeometry();
+    fireEvent.click(screen.getByRole("button", { name: /^Bar Perk, 2×1, at A2/ }), {
+      clientX: 700,
+      clientY: 120,
+    });
+    expect(screen.getByTestId("perk-cursor-preview")).toBeInTheDocument();
+
+    fireEvent.click(window, { clientX: 700, clientY: 600 });
+
+    expect(dispatch).toHaveBeenCalledWith({ type: "remove-perk", perkId: "perk-bar" });
+    expect(screen.queryByTestId("perk-cursor-preview")).not.toBeInTheDocument();
+  });
+
+  it("swaps to another library brick instead of putting the held one down", () => {
+    renderWorkbench();
+    mockGridGeometry();
+    const bar = screen.getByRole("button", { name: "Pick up Bar Perk for placement" });
+    const core = screen.getByRole("button", { name: "Pick up Core Perk for placement" });
+    fireEvent.click(bar, { clientX: 700, clientY: 120 });
+    expect(bar).toHaveClass("is-pending");
+
+    fireEvent.click(core, { clientX: 700, clientY: 160 });
+
+    expect(core).toHaveClass("is-pending");
+    expect(bar).not.toHaveClass("is-pending");
+    expect(screen.getByTestId("perk-cursor-preview")).toBeInTheDocument();
+  });
 });
 
 describe("PerkWorkbench grid presentation", () => {

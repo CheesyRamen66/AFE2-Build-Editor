@@ -1371,27 +1371,29 @@ export function PerkWorkbench({
 
   useEffect(() => {
     if (!cursorPerk) return;
-    const dropJustOutside = (event: MouseEvent) => {
+    const dropOutsideGrid = (event: MouseEvent) => {
+      if (pendingFamilyAssignment) return;
       const board = boardRef.current;
       if (!board || (event.target instanceof Node && board.contains(event.target))) return;
+      // Controls that own the held brick themselves: rotating it, cancelling it,
+      // picking up a different one, or resolving its family in a dialog. Clicking
+      // one of those is not the same as putting the brick down.
       if (
         event.target instanceof Element &&
-        event.target.closest("button, input, textarea, select, a, [role='button']")
+        event.target.closest(
+          ".perk-list-item, .board-actions, .perk-library__actions, [role='dialog']",
+        )
       ) {
         return;
       }
-      const bounds = gridBounds(board, layout, gridMetricsRef.current);
-      const margin = Math.max(
-        28,
-        Math.min(56, Math.max(gridMetricsRef.current.cellWidth, gridMetricsRef.current.cellHeight)),
-      );
-      if (!bounds || !pointJustOutsideBounds(bounds, event.clientX, event.clientY, margin)) return;
+      // Releasing a brick anywhere off the grid throws it away, mirroring the
+      // native drag-out gesture. The click is spent on the drop and nothing else.
       event.preventDefault();
       event.stopImmediatePropagation();
       discardHeldPerk();
     };
-    window.addEventListener("click", dropJustOutside, true);
-    return () => window.removeEventListener("click", dropJustOutside, true);
+    window.addEventListener("click", dropOutsideGrid, true);
+    return () => window.removeEventListener("click", dropOutsideGrid, true);
   });
 
   const flagBlockedRotation = (perkId: string) => {

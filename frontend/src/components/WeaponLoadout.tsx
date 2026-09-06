@@ -148,6 +148,20 @@ export function WeaponLoadout({
                 )}
               </button>
 
+              <div className="weapon-card__pips" aria-hidden="true">
+                {equipmentSlots.map((slot) => {
+                  const key = attachmentSlotKey(slot);
+                  const attachmentId = selection.attachments[key] ?? null;
+                  const filled = Boolean(attachmentId && index.byId.get(attachmentId));
+                  return (
+                    <span
+                      className={`weapon-card__pip ${filled ? "is-filled" : ""}`}
+                      key={key}
+                    />
+                  );
+                })}
+              </div>
+
               <div className="attachment-strip">
                 {equipmentSlots.map((slot) => {
                   const key = attachmentSlotKey(slot);

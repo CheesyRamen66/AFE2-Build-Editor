@@ -61,9 +61,9 @@ def valid_static_stat_lines() -> list[dict[str, object]]:
     return [
         {
             "attribute": "GunGameplayAttributes.TimeToReload",
-            "displayText": "+20.0% Reload Speed",
+            "displayText": "+20% Reload Speed",
             "displayType": "Percent",
-            "displayValue": "+20.0%",
+            "displayValue": "+20%",
             "effectPackagePath": (
                 "/Game/Blueprints/Gameplay/GameplayEffects/AvoMods/"
                 "Avo_Weapon_ReloadSpeed"
@@ -1006,7 +1006,7 @@ class ValidationTests(unittest.TestCase):
             "Augment effect\r\n"
             "Augment flavor\r\n"
             "Augment summary\r\n"
-            "+20.0% Reload Speed\r\n"
+            "+20% Reload Speed\r\n"
             "<Bold>On Taking Damage</>:\r\n"
             "  +25% Damage Resistance\r\n"
             "  Lasts <Bold>5 seconds</>."
@@ -1029,14 +1029,14 @@ class ValidationTests(unittest.TestCase):
         ):
             document["staticStatLines"][0].update(
                 {
-                    "displayText": "+999.0% Reload Speed",
-                    "displayValue": "+999.0%",
+                    "displayText": "+999% Reload Speed",
+                    "displayValue": "+999%",
                     "statValue": 999.0,
                 }
             )
         planner_record(self_consistent_but_wrong, "augment:implementation")[
             "description"
-        ] = planner["description"].replace("+20.0%", "+999.0%")
+        ] = planner["description"].replace("+20%", "+999%")
 
         wrong_result = validate_outputs(**self_consistent_but_wrong)
 
@@ -1290,7 +1290,7 @@ class ValidationTests(unittest.TestCase):
         source_mod["effects"] = [valid_reload_speed_effect()]
         source_mod["staticStatLines"] = deepcopy(lines)
         planner_mod["authoredDescription"] = None
-        planner_mod["description"] = "+20.0% Reload Speed"
+        planner_mod["description"] = "+20% Reload Speed"
         planner_mod["staticStatLines"] = deepcopy(lines)
         arguments["planner_catalogue"]["coverage"]["recordsWithStaticStatLines"] = 1
 
@@ -1344,14 +1344,14 @@ class ValidationTests(unittest.TestCase):
         ):
             document["staticStatLines"][0].update(
                 {
-                    "displayText": "+999.0% Reload Speed",
-                    "displayValue": "+999.0%",
+                    "displayText": "+999% Reload Speed",
+                    "displayValue": "+999%",
                     "statValue": 999.0,
                 }
             )
         planner_record(self_consistent_but_wrong, "mod:magazine")[
             "description"
-        ] = "+999.0% Reload Speed"
+        ] = "+999% Reload Speed"
 
         wrong_result = validate_outputs(**self_consistent_but_wrong)
 

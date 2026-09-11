@@ -144,6 +144,33 @@ describe("build model", () => {
   });
 
   describe("perk placement", () => {
+    it("moves a brick and turns it in one step", () => {
+      let state = createBuildForKit(index, "kit-alpha");
+      state = reduceBuild(index, state, {
+        type: "place-perk",
+        placement: placement("perk-bar", 4, 1),
+      });
+
+      const moved = reduceBuild(index, state, {
+        type: "move-perk",
+        perkId: "perk-bar",
+        row: 0,
+        column: 3,
+        rotation: "Clockwise90",
+      });
+      expect(moved.perks).toEqual([placement("perk-bar", 0, 3, "Clockwise90")]);
+
+      // Upright on the bottom row the bar would hang off the board.
+      const refused = reduceBuild(index, state, {
+        type: "move-perk",
+        perkId: "perk-bar",
+        row: 4,
+        column: 3,
+        rotation: "Clockwise90",
+      });
+      expect(refused).toBe(state);
+    });
+
     it("rejects cells outside the board and cells reserved by the layout", () => {
       const outOfBounds = validatePlacement(
         index,

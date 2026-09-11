@@ -49,6 +49,8 @@ export type BuildAction =
       perkId: string;
       row: number;
       column: number;
+      /** A brick can be turned while it is held, so a move may land rotated. */
+      rotation?: Rotation;
       targetId?: string;
       targetFamilyId?: string;
     }
@@ -357,6 +359,7 @@ export function reduceBuild(
         ...current,
         row: action.row,
         column: action.column,
+        rotation: action.rotation ?? current.rotation,
         ...(Object.prototype.hasOwnProperty.call(action, "targetFamilyId")
           ? action.targetFamilyId
             ? { targetId: action.targetId, targetFamilyId: action.targetFamilyId }

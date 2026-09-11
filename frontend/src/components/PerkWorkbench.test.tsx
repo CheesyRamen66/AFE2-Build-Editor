@@ -271,7 +271,38 @@ describe("PerkWorkbench pickup interaction", () => {
       perkId: "perk-bar",
       row: 1,
       column: 2,
+      rotation: "Default",
     });
+  });
+
+  it("turns a brick lifted off the board even where it could not turn in place", () => {
+    const { dispatch } = renderWorkbench({
+      perks: [{ perkId: "perk-bar", row: 4, column: 1, rotation: "Default" }],
+    });
+    const board = mockGridGeometry();
+    fireEvent.click(screen.getByRole("button", { name: /^Bar Perk, 2×1, at B5/ }), {
+      clientX: 700,
+      clientY: 120,
+    });
+    const preview = screen.getByTestId("perk-cursor-preview");
+    expect(preview).toHaveStyle({ width: "110px", height: "52px" });
+    expect(screen.getByRole("button", { name: /Rotate/ })).toBeInTheDocument();
+
+    // On the bottom row an upright bar would hang off the board, so it cannot
+    // turn where it sits. In hand it turns freely and the board is untouched.
+    fireEvent.keyDown(window, { key: "d" });
+    expect(preview).toHaveStyle({ width: "52px", height: "110px" });
+    expect(dispatch).not.toHaveBeenCalled();
+
+    fireEvent.pointerMove(window, { clientX: 197, clientY: 226 });
+    expect(preview).not.toHaveAttribute("data-snap-state", "overlap");
+    fireEvent.click(board, { clientX: 197, clientY: 226 });
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: "move-perk",
+      perkId: "perk-bar",
+      rotation: "Clockwise90",
+    }));
+    expect(screen.queryByTestId("perk-cursor-preview")).not.toBeInTheDocument();
   });
 
   it("rotates the grab point with a held brick", () => {
@@ -347,6 +378,7 @@ describe("PerkWorkbench pickup interaction", () => {
       perkId: "perk-bar",
       row: 1,
       column: 2,
+      rotation: "Default",
     });
   });
 
@@ -666,13 +698,14 @@ describe("PerkWorkbench grid presentation", () => {
     expect(screen.queryByRole("button", { name: "Show more perks" })).not.toBeInTheDocument();
   });
 
-  it("shows only the perk type beneath a library name and keeps status in the right box", () => {
+  it("shows only the perk type beneath a library name and marks perks needing a target", () => {
     renderWorkbench();
 
     const core = screen.getByRole("button", { name: "Pick up Core Perk for placement" });
     expect(core.querySelector(".perk-list-item__copy small")).toHaveTextContent(/^core$/);
     expect(core.querySelector(".perk-list-item__copy")).not.toHaveTextContent("1×1");
-    expect(core.querySelector(".perk-state")).toHaveTextContent(/^1×1$/);
+    expect(core.querySelector(".footprint-chip")).not.toBeNull();
+    expect(core.querySelector(".perk-list-item__warning")).toBeNull();
 
     const unfulfilled = screen.getByRole("button", {
       name: "Pick up Second Linked Modifier for placement",
@@ -680,7 +713,29 @@ describe("PerkWorkbench grid presentation", () => {
     expect(unfulfilled.querySelector(".perk-list-item__copy small"))
       .toHaveTextContent(/^modifier$/);
     expect(unfulfilled.querySelector(".perk-list-item__copy")).not.toHaveTextContent("1×1");
-    expect(unfulfilled.querySelector(".perk-state")).toHaveTextContent(/^TARGET$/);
+    expect(unfulfilled.querySelector(".perk-list-item__warning")).not.toBeNull();
+    // The chip keeps its own colour; the marker is what says a target is missing.
+    expect(unfulfilled.querySelector(".footprint-chip")).not.toBeNull();
+  });
+
+  it("previews the library perk as its board chip, sized to the footprint", () => {
+    renderWorkbench();
+
+    const core = screen.getByRole("button", { name: "Pick up Core Perk for placement" });
+    const coreChip = core.querySelector<HTMLElement>(".footprint-chip");
+    expect(core).not.toHaveTextContent("1×1");
+    expect(coreChip).toHaveAttribute("aria-label", "1 by 1 cells");
+    expect(coreChip).toHaveStyle({ "--footprint-columns": "1", "--footprint-rows": "1" });
+    // The chip holds the perk icon, the way a placed chip does on the board.
+    expect(coreChip!.querySelector(".record-visual")).not.toBeNull();
+
+    const bar = screen.getByRole("button", { name: "Pick up Bar Perk for placement" });
+    const barChip = bar.querySelector<HTMLElement>(".footprint-chip");
+    expect(bar).not.toHaveTextContent("2×1");
+    expect(barChip).toHaveAttribute("aria-label", "2 by 1 cells");
+    expect(barChip).toHaveStyle({ "--footprint-columns": "2", "--footprint-rows": "1" });
+    expect(barChip!.style.getPropertyValue("--chip-color"))
+      .toBe(bar.style.getPropertyValue("--perk-library-well"));
   });
 
   it("keeps names off the bricks and presents name plus info in a hover tooltip", () => {

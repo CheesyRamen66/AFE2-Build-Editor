@@ -3,6 +3,7 @@ import {
   MousePointer2,
   RotateCw,
   Search,
+  TriangleAlert,
   Unlink,
   X,
 } from "lucide-react";
@@ -348,6 +349,47 @@ function chipBodyPath(perk: PerkRecord, rotation: Rotation): string | undefined 
 function footprintLabel(perk: PerkRecord, rotation: Rotation = "Default"): string {
   const shape = rotateShape(perk.grid.shapes[0], rotation);
   return `${shape.width}×${shape.height}`;
+}
+
+// The library draws every chip at one scale so footprints stay comparable, inside a
+// window wide enough for the footprints that actually recur. The handful of 1x10
+// bricks overrun it and get drawn at true scale behind a fade, the way the game shows
+// that a brick runs past the space its row can give it.
+const CHIP_CELL_PX = 26;
+const CHIP_WINDOW_PX = 104;
+
+/* The library row's chip: the same artwork the board places, scaled down and holding
+   the perk's icon, so a row is a preview of the brick you are about to drop. */
+function FootprintChip({
+  perk,
+  color,
+  rotation = "Default",
+}: {
+  perk: PerkRecord;
+  color: string;
+  rotation?: Rotation;
+}) {
+  const shape = rotateShape(perk.grid.shapes[0], rotation);
+  const body = chipBodyPath(perk, rotation);
+  const trueWidth = shape.width * CHIP_CELL_PX;
+  return (
+    <span
+      className="footprint-chip"
+      style={{
+        ...chipBodyStyle(body, color),
+        "--footprint-columns": shape.width,
+        "--footprint-rows": shape.height,
+        "--chip-true-width": `${trueWidth}px`,
+        "--chip-window": `${Math.min(trueWidth, CHIP_WINDOW_PX)}px`,
+        "--chip-height": `${shape.height * CHIP_CELL_PX}px`,
+      } as CSSProperties}
+      data-overflow={trueWidth > CHIP_WINDOW_PX ? "true" : undefined}
+      role="img"
+      aria-label={`${shape.width} by ${shape.height} cells`}
+    >
+      <RecordVisual record={perk} />
+    </span>
+  );
 }
 
 function modifierCandidateIds(perk: PerkRecord): string[] {
@@ -730,6 +772,10 @@ export function PerkWorkbench({
   const [pendingPerkId, setPendingPerkId] = useState<string | null>(null);
   const [pendingRotation, setPendingRotation] = useState<Rotation>("Default");
   const [movingPerkId, setMovingPerkId] = useState<string | null>(null);
+  // A brick lifted off the board turns in the hand, not on the board: its
+  // placement is left alone until it is dropped somewhere legal.
+  const [movingRotation, setMovingRotation] =
+    useState<{ perkId: string; rotation: Rotation } | null>(null);
   const [draggingPerkId, setDraggingPerkId] = useState<string | null>(null);
   const [pointerPosition, setPointerPosition] = useState<{ x: number; y: number } | null>(null);
   const [gridMetrics, setGridMetrics] = useState<GridMetrics>(FALLBACK_GRID_METRICS);
@@ -929,10 +975,15 @@ export function PerkWorkbench({
   const movingPerk = movingPlacement
     ? (index.byId.get(movingPlacement.perkId) as PerkRecord | undefined)
     : undefined;
+  const movingHeldRotation = movingPlacement
+    ? movingRotation?.perkId === movingPlacement.perkId
+      ? movingRotation.rotation
+      : movingPlacement.rotation
+    : undefined;
   const activePerk = pendingPerk ?? movingPerk;
-  const activeRotation = pendingPerk ? pendingRotation : movingPlacement?.rotation;
+  const activeRotation = pendingPerk ? pendingRotation : movingHeldRotation;
   const cursorPerk = pendingPerk ?? (movingPerkId ? movingPerk : undefined);
-  const cursorRotation = pendingPerk ? pendingRotation : movingPlacement?.rotation;
+  const cursorRotation = pendingPerk ? pendingRotation : movingHeldRotation;
   const activeShape = activePerk && activeRotation
     ? rotateShape(activePerk.grid.shapes[0], activeRotation)
     : undefined;
@@ -1026,6 +1077,7 @@ export function PerkWorkbench({
       setPendingPerkId(null);
       setPendingRotation("Default");
       setMovingPerkId(perk.id);
+      setMovingRotation(null);
       setDraggingPerkId(null);
       setPointerPosition({ x, y });
       notify(`${perk.displayName} picked up. Choose a highlighted grid cell.`);
@@ -1044,6 +1096,7 @@ export function PerkWorkbench({
     setPendingPerkId(null);
     setPendingRotation("Default");
     setMovingPerkId(null);
+    setMovingRotation(null);
     setDraggingPerkId(null);
     setPointerPosition(null);
     updateGrabOffset(null);
@@ -1073,6 +1126,7 @@ export function PerkWorkbench({
         perkId: placement.perkId,
         row: placement.row,
         column: placement.column,
+        rotation: placement.rotation,
         targetId: placement.targetId,
         targetFamilyId: placement.targetFamilyId,
       });
@@ -1199,11 +1253,16 @@ export function PerkWorkbench({
     );
   };
 
-  const movePerk = (perkId: string, row: number, column: number): boolean => {
+  const movePerk = (
+    perkId: string,
+    row: number,
+    column: number,
+    rotation: Rotation,
+  ): boolean => {
     const current = build.perks.find((placement) => placement.perkId === perkId);
     const perk = index.byId.get(perkId);
     if (!current || !perk || perk.kind !== "perk") return false;
-    const candidate = { ...current, row, column };
+    const candidate = { ...current, row, column, rotation };
     const result = validatePlacement(index, layout, build.perks, candidate, perkId);
     if (!result.valid) {
       notify(result.reason ?? "That perk cannot be moved there.");
@@ -1226,7 +1285,7 @@ export function PerkWorkbench({
       return;
     }
     const { row, column } = snapped.placement;
-    if (movingPerk) movePerk(movingPerk.id, row, column);
+    if (movingPerk) movePerk(movingPerk.id, row, column, snapped.placement.rotation);
     else if (pendingPerk) tryPlace(pendingPerk.id, row, column, snapped.placement.rotation);
   };
 
@@ -1271,8 +1330,11 @@ export function PerkWorkbench({
       const placement = build.perks.find((candidate) => candidate.perkId === movingId);
       const perk = index.byId.get(movingId);
       if (!placement || perk?.kind !== "perk") return;
+      const heldRotation = movingRotation?.perkId === movingId
+        ? movingRotation.rotation
+        : placement.rotation;
       const offset = grabOffsetRef.current ?? centeredGrabOffset(
-        rotateShape(perk.grid.shapes[0], placement.rotation),
+        rotateShape(perk.grid.shapes[0], heldRotation),
         gridMetricsRef.current,
       );
       const fallbackCell = gridCellAtPoint(boardRef.current, event.clientX, event.clientY) ??
@@ -1289,7 +1351,7 @@ export function PerkWorkbench({
         layout,
         build,
         perk,
-        placement.rotation,
+        heldRotation,
         movingId,
         boardRef.current,
         gridMetricsRef.current,
@@ -1302,7 +1364,7 @@ export function PerkWorkbench({
             layout,
             build,
             perk,
-            placement.rotation,
+            heldRotation,
             movingId,
             fallbackCell,
             offset,
@@ -1313,7 +1375,9 @@ export function PerkWorkbench({
         notify("That placement overlaps another brick.");
         return;
       }
-      if (snapped) movePerk(movingId, snapped.placement.row, snapped.placement.column);
+      if (snapped) {
+        movePerk(movingId, snapped.placement.row, snapped.placement.column, snapped.placement.rotation);
+      }
       return;
     }
     const perkId = event.dataTransfer.getData("application/x-afe2-perk");
@@ -1425,19 +1489,6 @@ export function PerkWorkbench({
       notify(result.reason ?? "There is not enough room to rotate this perk.");
       return;
     }
-    if (movingPerkId === perkId || draggingPerkId === perkId) {
-      const fromShape = rotateShape(perk.grid.shapes[0], placement.rotation);
-      const toShape = rotateShape(perk.grid.shapes[0], rotation);
-      const currentOffset = grabOffsetRef.current ?? centeredGrabOffset(fromShape, gridMetricsRef.current);
-      updateGrabOffset(rotateGrabOffset(
-        currentOffset,
-        fromShape,
-        toShape,
-        placement.rotation,
-        rotation,
-        gridMetricsRef.current,
-      ));
-    }
     stagePlacement(
       "rotate",
       candidate,
@@ -1445,22 +1496,25 @@ export function PerkWorkbench({
     );
   };
 
-  const rotatePending = () => {
-    if (!pendingPerk) return;
-    const rotation = nextRotation(pendingPerk, pendingRotation);
-    if (rotation === pendingRotation) return;
-    const fromShape = rotateShape(pendingPerk.grid.shapes[0], pendingRotation);
-    const toShape = rotateShape(pendingPerk.grid.shapes[0], rotation);
+  // Turns whatever is in hand, from the library or lifted off the board. It is
+  // not validated here: a held brick is only checked where it is dropped.
+  const rotateHeld = () => {
+    if (!activePerk || !activeRotation) return;
+    const rotation = nextRotation(activePerk, activeRotation);
+    if (rotation === activeRotation) return;
+    const fromShape = rotateShape(activePerk.grid.shapes[0], activeRotation);
+    const toShape = rotateShape(activePerk.grid.shapes[0], rotation);
     const currentOffset = grabOffsetRef.current ?? centeredGrabOffset(fromShape, gridMetricsRef.current);
     updateGrabOffset(rotateGrabOffset(
       currentOffset,
       fromShape,
       toShape,
-      pendingRotation,
+      activeRotation,
       rotation,
       gridMetricsRef.current,
     ));
-    setPendingRotation(rotation);
+    if (pendingPerk) setPendingRotation(rotation);
+    else setMovingRotation({ perkId: activePerk.id, rotation });
   };
 
   const openCompatibleModifiers = (hovered: HoveredGridChip) => {
@@ -1590,12 +1644,9 @@ export function PerkWorkbench({
       }
       if (key === "d") {
         const activeGridChip = shortcutGridChip();
-        if (movingPerk) {
+        if (pendingPerk || movingPerk) {
           event.preventDefault();
-          rotatePlaced(movingPerk.id);
-        } else if (pendingPerk) {
-          event.preventDefault();
-          rotatePending();
+          rotateHeld();
         } else if (activeGridChip?.kind === "perk") {
           event.preventDefault();
           rotatePlaced(activeGridChip.perkId);
@@ -1743,11 +1794,11 @@ export function PerkWorkbench({
               </div>
             )}
             <div className="board-actions">
-              {pendingPerk && canRotate(pendingPerk) && (
+              {cursorPerk && canRotate(cursorPerk) && (
                 <button
                   type="button"
                   className="button button--tool"
-                  onClick={rotatePending}
+                  onClick={rotateHeld}
                 >
                   <RotateCw size={15} /> Rotate
                   <kbd>D</kbd>
@@ -1976,6 +2027,7 @@ export function PerkWorkbench({
                       event.dataTransfer.setData("application/x-afe2-placed-perk", perk.id);
                       event.dataTransfer.effectAllowed = "move";
                       event.dataTransfer.setDragImage?.(event.currentTarget, offset.x, offset.y);
+                      setMovingRotation(null);
                       setDraggingPerkId(perk.id);
                     }}
                     onDragEnd={(event) => {
@@ -2045,6 +2097,7 @@ export function PerkWorkbench({
                       setPendingRotation("Default");
                       pendingFamilyFilterIdRef.current = null;
                       setMovingPerkId(perk.id);
+                      setMovingRotation(null);
                       setDraggingPerkId(null);
                       setPointerPosition({ x: event.clientX, y: event.clientY });
                       notify(`${perk.displayName} picked up. Choose a highlighted grid cell.`);
@@ -2196,14 +2249,18 @@ export function PerkWorkbench({
                     ? "grid-chip-tooltip"
                     : undefined}
                 >
-                  <RecordVisual record={perk} />
+                  <FootprintChip perk={perk} color={perkChipColor(perk, index.kits.length)} />
                   <span className="perk-list-item__copy">
                     <strong>{perk.displayName}</strong>
                     <small>{perk.perkType}</small>
                   </span>
-                  <span className={`perk-state perk-state--${unfulfilled ? "unfulfilled" : perk.perkType}`}>
-                    {unfulfilled ? "TARGET" : footprintLabel(perk)}
-                  </span>
+                  {unfulfilled && (
+                    <TriangleAlert
+                      className="perk-list-item__warning"
+                      size={17}
+                      aria-hidden="true"
+                    />
+                  )}
                 </button>
               );
             })}

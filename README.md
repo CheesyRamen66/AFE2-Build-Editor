@@ -352,7 +352,19 @@ is a readability-oriented composition of those sections, with a single line
 separator and two-space conditional-stat indent declared by the matching entry
 under `textContract`. Every generated stat occupies its own line; a trigger
 such as `On Hit:` occupies the preceding line and its child rows are indented.
-Generated signs are compact (`+20.0%`, not `+ 20.0%`). The
+Generated signs are compact (`+20.0%`, not `+ 20.0%`).
+
+A generated percentage is the authored factor's distance from one, and it keeps
+the direction that factor travelled: Micro Flechettes configures `0.9` for
+`Avo_Weapon_Damage` and publishes `-10.0% Damage`, while `Avo_Weapon_ReloadSpeed`
+at `1.2` publishes `+20.0% Reload Speed`. A factor of zero is authored rather
+than absent, and Absolute Zero's own copy describes it as negating the stat. The
+`ShowNegative` display rows invert that glyph, because each is named for the
+inverse of the attribute behind it: `Handling` for equip and aim times, or the
+charge speed the P.649 HEL Mk.II's authored line quotes as `+10%` for a `0.9`
+`PrefireDelayTime`. The factor is read as authored in either case; the effect's
+own `Multiply`/`Divide` operation is not consulted a second time. Whether the
+resulting number is desirable stays the independent `result` direction. The
 structured fields remain authoritative for a closer recreation of the game
 panel. The frontend may render the composed string directly with whitespace
 preservation; it must not derive percentages or reinterpret effect magnitudes.

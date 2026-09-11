@@ -177,7 +177,7 @@ class AttachmentDescriptionTests(unittest.TestCase):
 
         self.assertEqual(
             [line["displayText"] for line in lines],
-            ["+10.0% Damage", "+20.0% Reload Speed"],
+            ["+10% Damage", "+20% Reload Speed"],
         )
         self.assertEqual(lines[1]["result"], "HigherIsBetter")
         self.assertEqual(
@@ -186,15 +186,15 @@ class AttachmentDescriptionTests(unittest.TestCase):
                 "Detailed effect.\r\n"
                 "Flavor text.\r\n"
                 "Summary.\r\n"
-                "+10.0% Damage\r\n"
-                "+20.0% Reload Speed\r\n"
+                "+10% Damage\r\n"
+                "+20% Reload Speed\r\n"
                 "<Bold>On Hit</>:\r\n"
                 "  -75% Weak Point DMG Bonus\r\n"
                 "  Lasts <Bold>5 seconds</>."
             ),
         )
 
-    def test_conditional_float_keeps_unreal_decimal_suffix(self) -> None:
+    def test_conditional_float_drops_only_trailing_zeros(self) -> None:
         source = {
             "conditionalDescriptions": [
                 {
@@ -205,7 +205,13 @@ class AttachmentDescriptionTests(unittest.TestCase):
                             "result": "HigherIsBetter",
                             "statText": "Bullet Penetration",
                             "statValue": 1.0,
-                        }
+                        },
+                        {
+                            "displayType": "Float",
+                            "result": "HigherIsBetter",
+                            "statText": "Weapon Range",
+                            "statValue": 1.05,
+                        },
                     ],
                 }
             ],
@@ -228,7 +234,7 @@ class AttachmentDescriptionTests(unittest.TestCase):
         )
 
         self.assertEqual(lines, [])
-        self.assertEqual(description, "+1.0 Bullet Penetration")
+        self.assertEqual(description, "+1 Bullet Penetration\r\n+1.05 Weapon Range")
 
     def test_priming_uses_client_reload_label_and_division_percentage(self) -> None:
         source = {
@@ -257,15 +263,15 @@ class AttachmentDescriptionTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(description, "+20.0% Reload Speed")
+        self.assertEqual(description, "+20% Reload Speed")
         self.assertEqual(
             lines,
             [
                 {
                     "attribute": "GunGameplayAttributes.TimeToReload",
-                    "displayText": "+20.0% Reload Speed",
+                    "displayText": "+20% Reload Speed",
                     "displayType": "Percent",
-                    "displayValue": "+20.0%",
+                    "displayValue": "+20%",
                     "effectPackagePath": (
                         "/Game/Blueprints/Gameplay/GameplayEffects/AvoMods/"
                         "Avo_Weapon_ReloadSpeed"
@@ -333,15 +339,80 @@ class AttachmentDescriptionTests(unittest.TestCase):
 
         self.assertEqual(
             [line["displayText"] for line in lines],
-            ["+15.0% Magazine Capacity", "+4.0% Max Ammo"],
+            ["+15% Magazine Capacity", "+4% Max Ammo"],
         )
         self.assertEqual(
             description,
             (
-                "+15.0% Magazine Capacity\r\n"
-                "+4.0% Max Ammo\r\n"
+                "+15% Magazine Capacity\r\n"
+                "+4% Max Ammo\r\n"
                 "<Bold>When Magazine is Empty</>:\r\n"
                 "  +10% Reload Speed"
+            ),
+        )
+
+    def test_conditional_bonus_is_listed_once_under_its_condition(self) -> None:
+        # Assault Brake's stationary bonus is also a visible gameplay effect, but
+        # the game lists it only under "While Stationary:".
+        source = {
+            "conditionalDescriptions": [
+                {
+                    "conditionText": "<Bold>While Stationary</>:",
+                    "statLines": [
+                        {
+                            "displayType": "Percent",
+                            "result": "HigherIsBetter",
+                            "statText": "Magazine Capacity",
+                            "statValue": 15.0,
+                        }
+                    ],
+                }
+            ],
+            "description": None,
+            "effects": [
+                effect(
+                    "Weapon_AmmoPerMag",
+                    1.15,
+                    ("GunGameplayAttributes.AmmoPerMag", "multiply"),
+                ),
+                effect(
+                    "Weapon_MaxAmmo",
+                    1.04,
+                    ("GunGameplayAttributes.MaxAmmo", "multiply"),
+                ),
+            ],
+            "kind": "mod",
+        }
+
+        description, lines = project_attachment_description(
+            source,
+            attribute_metadata=metadata(
+                row(
+                    "GunGameplayAttributes.AmmoPerMag",
+                    "Magazine Capacity",
+                    "Integer",
+                    "Multiply",
+                    "HigherIsBetter",
+                    16,
+                ),
+                row(
+                    "GunGameplayAttributes.MaxAmmo",
+                    "Max Ammo",
+                    "Integer_Truncated",
+                    "Multiply",
+                    "HigherIsBetter",
+                    23,
+                ),
+            ),
+        )
+
+        self.assertEqual([line["displayText"] for line in lines], ["+4% Max Ammo"])
+        self.assertEqual(
+            description,
+            (
+                "+4% Max Ammo\r\n"
+                "<Bold>While Stationary</>:\r\n"
+                "  +15% Magazine Capacity"
             ),
         )
 
@@ -418,17 +489,17 @@ class AttachmentDescriptionTests(unittest.TestCase):
 
         self.assertEqual(
             [line["displayText"] for line in lines],
-            ["+20.0% Reload Speed"],
+            ["+20% Reload Speed"],
         )
         self.assertEqual(
             description,
             (
-                "+20.0% Reload Speed\r\n"
+                "+20% Reload Speed\r\n"
                 "<Bold>When Magazine is Empty</>:\r\n  -20% Reload Speed"
             ),
         )
 
-    def test_accuracy_effect_uses_exact_spread_row_and_positive_glyph(self) -> None:
+    def test_accuracy_effect_uses_exact_spread_row_and_signed_reduction(self) -> None:
         source = {
             "description": None,
             "effects": [
@@ -463,9 +534,9 @@ class AttachmentDescriptionTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(description, "+10.0% Spread")
+        self.assertEqual(description, "-10% Spread")
         self.assertEqual(lines[0]["attribute"], "GunGameplayAttributes.MinimumSpread")
-        self.assertEqual(lines[0]["statValue"], 10.0)
+        self.assertEqual(lines[0]["statValue"], -10.0)
 
     def test_effect_ui_override_replaces_handling_internals_with_combined_row(self) -> None:
         source = {
@@ -513,7 +584,7 @@ class AttachmentDescriptionTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(description, "+20.0% Handling")
+        self.assertEqual(description, "+20% Handling")
         self.assertEqual(
             [line["attribute"] for line in lines],
             ["Stats.Combined.Handling"],
@@ -547,7 +618,7 @@ class AttachmentDescriptionTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(description, "+10.0% Aim Assist")
+        self.assertEqual(description, "+10% Aim Assist")
         self.assertEqual(lines[0]["attribute"], "Stats.Combined.AimAssist")
 
     def test_trait_keeps_rows_filtered_only_by_the_mod_widget(self) -> None:
@@ -638,7 +709,7 @@ class AttachmentDescriptionTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(description, "+20.0% Reload Speed")
+        self.assertEqual(description, "+20% Reload Speed")
         self.assertEqual(lines[0]["result"], "LowerIsBetter")
 
     def test_authored_trait_description_suppresses_computed_stats(self) -> None:
@@ -699,10 +770,10 @@ class AttachmentDescriptionTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(description, "+20.0% Reload Speed")
-        self.assertEqual(lines[0]["statValue"], 20.0)
+        self.assertEqual(description, "-20% Reload Speed")
+        self.assertEqual(lines[0]["statValue"], -20.0)
 
-    def test_scalable_float_stats_precede_the_authored_conditional_section(self) -> None:
+    def test_stationary_brake_lists_its_bonus_only_under_the_condition(self) -> None:
         source = {
             "conditionalDescriptions": [
                 {
@@ -767,15 +838,10 @@ class AttachmentDescriptionTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(
-            [line["displayText"] for line in lines],
-            ["+20.0% Stopping Power", "+20.0% Recoil"],
-        )
+        self.assertEqual(lines, [])
         self.assertEqual(
             description,
             (
-                "+20.0% Stopping Power\r\n"
-                "+20.0% Recoil\r\n"
                 "<Bold>While Stationary</>:\r\n"
                 "  +20% Stopping Power\r\n"
                 "  -20% Recoil\r\n"
@@ -820,7 +886,7 @@ class AttachmentDescriptionTests(unittest.TestCase):
             attribute_metadata=fire_rate_metadata,
         )
 
-        self.assertEqual(description, "+10.0% Fire Rate")
+        self.assertEqual(description, "-10% Fire Rate")
         self.assertEqual(
             [line["attribute"] for line in lines],
             ["GunGameplayAttributes.TimeBetweenShots"],
@@ -869,17 +935,19 @@ class AttachmentDescriptionTests(unittest.TestCase):
 
         self.assertEqual(
             description,
-            "+10.0% Fire Rate\r\n+35.0% Fire Rate Limit",
+            "-10% Fire Rate\r\n+35% Fire Rate Limit",
         )
-        self.assertEqual([line["statValue"] for line in lines], [10.0, 35.0])
+        self.assertEqual([line["statValue"] for line in lines], [-10.0, 35.0])
 
-    def test_fire_rate_limit_dedup_compares_projected_values(self) -> None:
+    def test_separate_effects_still_hide_a_matching_fire_rate_limit(self) -> None:
+        # The limit row is compared after projection, so a second effect that
+        # lands on the same value is hidden exactly like the single-effect case.
         source = {
             "description": None,
             "effects": [
                 effect(
                     "Avo_Weapon_FireRate",
-                    0.9,
+                    1.1,
                     ("GunGameplayAttributes.TimeBetweenShots", "divide"),
                 ),
                 effect(
@@ -913,7 +981,7 @@ class AttachmentDescriptionTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(description, "+10.0% Fire Rate")
+        self.assertEqual(description, "+10% Fire Rate")
         self.assertEqual(len(lines), 1)
 
 

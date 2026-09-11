@@ -35,7 +35,17 @@ test("builds a local kit, perk, weapon, and item loadout", async ({ page }) => {
     .toHaveCount(0);
   const firstLibraryPerk = page.locator(".perk-list-item").first();
   await expect(firstLibraryPerk.locator(".perk-list-item__copy small")).not.toContainText("×");
-  await expect(firstLibraryPerk.locator(".perk-state")).toContainText("×");
+  await expect(firstLibraryPerk).not.toContainText("×");
+  // The row previews the board chip: sized to the footprint, holding the perk icon.
+  const firstChip = firstLibraryPerk.locator(".footprint-chip");
+  await expect(firstChip).toBeVisible();
+  await expect(firstChip.locator(".record-visual")).toBeVisible();
+  const chipBox = await firstChip.boundingBox();
+  const columns = await firstChip.evaluate((element) => Number(
+    getComputedStyle(element).getPropertyValue("--footprint-columns"),
+  ));
+  expect(columns).toBeGreaterThan(0);
+  expect(chipBox?.width).toBeCloseTo(Math.min(columns * 26, 120), 0);
   await expect(page.locator(".kit-card__copy strong")).toHaveText([
     "Duelist",
     "Machinist",
@@ -46,11 +56,11 @@ test("builds a local kit, perk, weapon, and item loadout", async ({ page }) => {
   ]);
   await expect(page.locator(".kit-card.is-selected .kit-card__copy strong")).toHaveCSS(
     "color",
-    "rgb(255, 138, 32)",
+    "rgb(242, 137, 45)",
   );
   await expect(page.locator(".site-header")).toHaveCSS(
     "border-top-color",
-    "rgba(255, 134, 28, 0.82)",
+    "rgba(241, 134, 42, 0.82)",
   );
 
   const kitRailBox = await page.locator(".kit-section").boundingBox();
@@ -161,9 +171,7 @@ test("builds a local kit, perk, weapon, and item loadout", async ({ page }) => {
   await expect(attachmentChoice).toHaveAttribute("data-record-kind", "mod");
   await expect(attachmentCopy).toHaveCSS("white-space", "pre-wrap");
   await expect(attachmentCopy).toHaveText(
-    "+20.0% Stopping Power\n"
-      + "+35.0% Recoil\n\n"
-      + "While Stationary:\n"
+    "While Stationary:\n"
       + "  +20% Stopping Power\n"
       + "  -35% Recoil",
   );
@@ -303,22 +311,26 @@ test("hover shortcuts filter, rotate, remove, and reset against game catalogue I
   const countedPerkSearch = page.getByRole("searchbox", { name: /Search \d+ perks/ });
   await expect(countedPerkSearch).toHaveAttribute("placeholder", `Search ${availableCount} perks`);
   await expect(page.getByRole("button", { name: "Show more perks" })).toHaveCount(0);
-  // The card frame is shared page furniture, so it stays identical across tones;
-  // only the icon well carries the chip colour that matches the perk on the board.
+  // The row plate is shared page furniture, so it stays identical across tones; only
+  // the footprint chip carries the colour the perk has on the board.
   for (const tone of ["green", "blue"]) {
     const item = page.locator(`.perk-list-item[data-well-tone="${tone}"]`).first();
     await expect(item).toBeVisible();
     await expect(item).toHaveAttribute("data-card-tone", "orange");
-    await expect(item).toHaveCSS("color", "rgb(240, 234, 220)");
-    await expect(item).toHaveCSS("border-top-color", "rgba(240, 112, 16, 0.34)");
-    await expect(item.locator(".record-visual")).toHaveCSS("color", "rgb(240, 234, 220)");
-    await expect(item.locator(".perk-state")).toHaveCSS("color", "rgb(255, 246, 232)");
+    await expect(item).toHaveCSS("color", "rgb(239, 230, 221)");
+    await expect(item).toHaveCSS("border-top-color", "rgba(227, 120, 29, 0.26)");
+    await expect(item.locator(".record-visual")).toHaveCSS("color", "rgb(239, 230, 221)");
+    const [well, chip] = await item.evaluate((element) => [
+      element.style.getPropertyValue("--perk-library-well"),
+      element.querySelector<HTMLElement>(".footprint-chip")?.style.getPropertyValue("--chip-color"),
+    ]);
+    expect(chip).toBe(well);
   }
-  const wellBorder = (tone: string) => page
-    .locator(`.perk-list-item[data-well-tone="${tone}"] .record-visual`)
+  const chipColour = (tone: string) => page
+    .locator(`.perk-list-item[data-well-tone="${tone}"] .footprint-chip`)
     .first()
-    .evaluate((element) => getComputedStyle(element).borderTopColor);
-  expect(await wellBorder("green")).not.toBe(await wellBorder("blue"));
+    .evaluate((element) => element.style.getPropertyValue("--chip-color"));
+  expect(await chipColour("green")).not.toBe(await chipColour("blue"));
   const secondaryAbility = page.locator(".ability-anchor--secondary");
   await expect(secondaryAbility).toHaveAttribute("aria-label", /Shrapnel Grenade/);
   await expect(secondaryAbility.getByText("Shrapnel Grenade", { exact: true })).toHaveCount(0);
@@ -414,8 +426,8 @@ test("hover shortcuts filter, rotate, remove, and reset against game catalogue I
   const readyStyle = await rowStyle(
     page.locator('.perk-list-item[data-dependency-status="ready"]').first(),
   );
-  expect(unfulfilledStyle.color).toBe("rgb(184, 175, 160)");
-  expect(readyStyle.color).toBe("rgb(240, 234, 220)");
+  expect(unfulfilledStyle.color).toBe("rgb(183, 172, 161)");
+  expect(readyStyle.color).toBe("rgb(239, 230, 221)");
   expect(unfulfilledStyle.border).not.toBe(readyStyle.border);
   await expect(firstUnfulfilledPerk).toHaveAttribute("data-card-tone", "gray");
   await expect(firstUnfulfilledPerk).toHaveAttribute("data-well-tone", "red");

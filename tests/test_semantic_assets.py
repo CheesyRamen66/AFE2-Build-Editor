@@ -1217,9 +1217,9 @@ class SemanticNormalizationTests(unittest.TestCase):
             [
                 {
                     "attribute": "GunGameplayAttributes.TimeToReload",
-                    "displayText": "+20.0% Reload Speed",
+                    "displayText": "+20% Reload Speed",
                     "displayType": "Percent",
-                    "displayValue": "+20.0%",
+                    "displayValue": "+20%",
                     "effectPackagePath": EFFECT,
                     "result": "HigherIsBetter",
                     "sortOrder": 13,
@@ -1246,7 +1246,7 @@ class SemanticNormalizationTests(unittest.TestCase):
         self.assertEqual(record["kind"], "augment")
         self.assertEqual(
             [line["displayText"] for line in record["staticStatLines"]],
-            ["+20.0% Reload Speed"],
+            ["+20% Reload Speed"],
         )
         self.assertEqual(result.document["coverage"]["recordsWithStaticStatLines"], 1)
 

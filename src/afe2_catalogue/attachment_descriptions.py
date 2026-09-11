@@ -264,16 +264,20 @@ def _comparison_value(
         "JankyIndicatorStatMath",
         "Multiply",
     }:
-        effective = magnitude if magnitude != 0.0 else 1.0
-        # The client formats the distance from the neutral multiplier and uses
-        # the factor's sign bit for the glyph; a positive factor below one is
-        # therefore still rendered with ``+``.  Whether that numeric change is
-        # desirable remains the independent metadata ``result`` direction.
-        direction = -1.0 if effective < 0.0 else 1.0
-        return direction * abs((effective - 1.0) * 100.0), "Percent"
+        # The client formats the authored factor's distance from the neutral
+        # multiplier and keeps the direction it travelled: Micro Flechettes
+        # configures 0.9 for Avo_Weapon_Damage, which takes a tenth of the
+        # damage away and must read as a loss.  A factor of zero is authored
+        # too, and Absolute Zero's copy calls it negating the stat outright.
+        # Whether the change is desirable remains the independent metadata
+        # ``result`` direction.
+        return (magnitude - 1.0) * 100.0, "Percent"
     if modifier_operation in {"DivideShowNegative", "MultiplyShowNegative"}:
-        effective = magnitude if magnitude != 0.0 else 1.0
-        return (1.0 - effective) * 100.0, "Percent"
+        # These rows are named for the inverse of the attribute behind them:
+        # Handling for equip and aim times, charge speed for the HEL's
+        # PrefireDelayTime.  The same distance is reported with the opposite
+        # glyph, so 0.9 there is the +10% the trait's own authored line quotes.
+        return (1.0 - magnitude) * 100.0, "Percent"
     raise CatalogueError(
         f"unsupported attachment comparable-stat operation: {modifier_operation}"
     )
@@ -291,23 +295,15 @@ def _compact_number(value: float) -> str:
     return f"{rounded:.6f}".rstrip("0").rstrip(".")
 
 
-def _ue_float_string(value: float) -> str:
-    """Match Conv_FloatToString while avoiding binary-float noise."""
-
-    compact = _compact_number(value)
-    return compact if "." in compact else f"{compact}.0"
-
-
 def _comparison_display_value(value: float, display_type: str) -> str:
     sign = "+" if value >= 0.0 else "-"
     absolute = abs(value)
     if display_type == "Percent":
-        number = f"{absolute:.1f}"
-        return f"{sign}{number}%"
+        return f"{sign}{_compact_number(round(absolute, 1))}%"
     if display_type == "Integer":
         return f"{sign}{int(math.floor(absolute + 0.5))}"
     if display_type == "Float":
-        return f"{sign}{absolute:.1f}"
+        return f"{sign}{_compact_number(round(absolute, 1))}"
     raise CatalogueError(f"unsupported attachment comparison display type: {display_type}")
 
 
@@ -351,7 +347,8 @@ def _static_stat_lines(
 
     # The trait panel suppresses computed stats only when its selected authored
     # Description field is non-empty. Conditional rows are an independent
-    # section and do not suppress static effects (Mondo is a shipped example).
+    # section and do not suppress static effects that differ from them (Mondo is
+    # a shipped example); see project_attachment_description for the overlap.
     if (
         source.get("kind") == "trait"
         and isinstance(source.get("description"), str)
@@ -461,7 +458,7 @@ def _conditional_display_text(line: Mapping[str, Any]) -> str | None:
     sign = "+" if value >= 0.0 else "-"
     absolute = abs(value)
     if display_type == "Float":
-        display_value = f"{sign}{_ue_float_string(absolute)}"
+        display_value = f"{sign}{_compact_number(absolute)}"
     elif display_type == "Integer":
         display_value = f"{sign}{int(math.floor(absolute + 0.5))}"
     elif display_type == "Percent":
@@ -550,6 +547,20 @@ def compose_attachment_description(
     return ATTACHMENT_DESCRIPTION_SECTION_SEPARATOR.join(sections) if sections else None
 
 
+def _conditional_stats(source: Mapping[str, Any]) -> set[tuple[str, float]]:
+    stats: set[tuple[str, float]] = set()
+    groups = source.get("conditionalDescriptions")
+    for group in groups if isinstance(groups, list) else ():
+        lines = group.get("statLines") if isinstance(group, Mapping) else None
+        for line in lines if isinstance(lines, list) else ():
+            if not isinstance(line, Mapping) or not isinstance(line.get("statText"), str):
+                continue
+            value = _finite_number(line.get("statValue"))
+            if value is not None:
+                stats.add((line["statText"].strip(), _clean_number(value)))
+    return stats
+
+
 def project_attachment_description(
     source: Mapping[str, Any],
     *,
@@ -562,6 +573,15 @@ def project_attachment_description(
             "attachment description projection requires an augment, mod, or trait"
         )
     static_lines = _static_stat_lines(source, attribute_metadata=attribute_metadata)
+    # A conditional bonus is itself a visible gameplay effect, so it also arrives
+    # as a static row. The game lists it once, under its condition (Assault Brake
+    # shows only "While Stationary:"), so drop the static copy of the same stat.
+    conditional = _conditional_stats(source)
+    static_lines = [
+        line
+        for line in static_lines
+        if (line["statText"].strip(), _clean_number(line["statValue"])) not in conditional
+    ]
     return (
         compose_attachment_description(source, static_lines=static_lines),
         static_lines,

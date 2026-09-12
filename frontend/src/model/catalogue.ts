@@ -210,6 +210,8 @@ export interface PerkRecord extends CatalogueRecordBase {
   kind: "perk";
   perkType: "core" | "modifier" | string;
   availableToKitIds: string[];
+  /** The kit progression that unlocks the perk; empty for perks with no kit source. */
+  availability?: Array<{ kitId: string; requiredRank?: number }>;
   grid: {
     allowedRotations: Rotation[];
     shapes: PerkShape[];
@@ -347,6 +349,15 @@ export interface PlannerCatalogue {
     perkColorPalette?: PerkColorPalette;
     placementRules: Record<string, unknown>;
   };
+}
+
+/** Every perk is usable by every kit; this is the kit whose progression unlocks it. */
+export function perkSourceKitNames(index: CatalogueIndex, perk: PerkRecord): string[] {
+  const names = (perk.availability ?? []).flatMap(({ kitId }) => {
+    const kit = index.byId.get(kitId);
+    return kit?.kind === "kit" ? [kit.displayName] : [];
+  });
+  return [...new Set(names)];
 }
 
 export interface CatalogueIndex {

@@ -1,7 +1,7 @@
 # AFE2 catalogue extractor runbook
 
 This is the practical guide. The technical design and data contract live in
-the [README](README.md).
+the [technical reference](TECHNICAL.md).
 
 The commands assume Linux. Do not run the extractor with `sudo`.
 

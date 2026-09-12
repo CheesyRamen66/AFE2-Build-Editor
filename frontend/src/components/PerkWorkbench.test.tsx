@@ -8,7 +8,7 @@ import {
   type BuildAction,
   type BuildState,
 } from "../model/build";
-import { createCatalogueIndex } from "../model/catalogue";
+import { createCatalogueIndex, type PerkRecord } from "../model/catalogue";
 import { createSyntheticPlannerCatalogue } from "../test/fixtures/plannerCatalogue";
 import { PerkWorkbench } from "./PerkWorkbench";
 
@@ -716,6 +716,31 @@ describe("PerkWorkbench grid presentation", () => {
     expect(unfulfilled.querySelector(".perk-list-item__warning")).not.toBeNull();
     // The chip keeps its own colour; the marker is what says a target is missing.
     expect(unfulfilled.querySelector(".footprint-chip")).not.toBeNull();
+  });
+
+  it("names the kit a perk is unlocked through beside its type", () => {
+    const catalogue = createSyntheticPlannerCatalogue();
+    const corePerk = catalogue.records.find((record) => record.id === "perk-core") as PerkRecord;
+    corePerk.availability = [{ kitId: "kit-alpha", requiredRank: 7 }];
+    const index = createCatalogueIndex(catalogue);
+    const kit = index.kits.find((candidate) => candidate.id === "kit-alpha")!;
+    render(
+      <PerkWorkbench
+        index={index}
+        kit={kit}
+        layout={index.layoutByKitId.get(kit.id)!}
+        build={createBuildForKit(index, kit.id)}
+        dispatch={vi.fn()}
+        onChooseAbility={vi.fn()}
+        notify={vi.fn()}
+      />,
+    );
+
+    const core = screen.getByRole("button", { name: "Pick up Core Perk for placement" });
+    expect(core.querySelector(".perk-list-item__copy small")).toHaveTextContent(/^core · Alpha$/);
+    // Perks with no kit source keep just their type.
+    const bar = screen.getByRole("button", { name: "Pick up Bar Perk for placement" });
+    expect(bar.querySelector(".perk-list-item__copy small")).toHaveTextContent(/^core$/);
   });
 
   it("previews the library perk as its board chip, sized to the footprint", () => {

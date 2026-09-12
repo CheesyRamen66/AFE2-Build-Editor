@@ -33,14 +33,15 @@ import {
   type ModifierFamilyChoice,
   type PlacedPerk,
 } from "../model/build";
-import type {
-  AbilitySlot,
-  CatalogueIndex,
-  GridCell,
-  KitGridLayout,
-  KitRecord,
-  PerkRecord,
-  Rotation,
+import {
+  perkSourceKitNames,
+  type AbilitySlot,
+  type CatalogueIndex,
+  type GridCell,
+  type KitGridLayout,
+  type KitRecord,
+  type PerkRecord,
+  type Rotation,
 } from "../model/catalogue";
 import { calculateFamilyConnectors } from "../model/familyConnectors";
 import { RecordVisual } from "./RecordVisual";
@@ -2252,7 +2253,7 @@ export function PerkWorkbench({
                   <FootprintChip perk={perk} color={perkChipColor(perk, index.kits.length)} />
                   <span className="perk-list-item__copy">
                     <strong>{perk.displayName}</strong>
-                    <small>{perk.perkType}</small>
+                    <small>{[perk.perkType, ...perkSourceKitNames(index, perk)].join(" · ")}</small>
                   </span>
                   {unfulfilled && (
                     <TriangleAlert

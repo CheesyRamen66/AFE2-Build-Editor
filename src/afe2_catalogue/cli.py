@@ -23,6 +23,7 @@ from .discovery import DiscoveryError, SourceInventory, discover_source_inventor
 from .errors import CatalogueError
 from .jsonio import digest_file, digest_value, publish_documents, read_json, write_json_atomic
 from .managed_tools import ManagedTool, ensure_managed_tools
+from .enemies import build_enemy_assets
 from .planner_catalogue import build_planner_catalogue
 from .save_evidence import build_save_evidence, load_character_save
 from .semantic_assets import (
@@ -447,6 +448,7 @@ def _make_documents(
     candidates["sourceFingerprint"] = source_fingerprint
 
     binary_files: dict[str, bytes] = {}
+    enemy_document: dict[str, Any] | None = None
     semantic_document: dict[str, Any] | None = None
     collection_document: dict[str, Any] | None = None
     grid_document: dict[str, Any] | None = None
@@ -493,6 +495,26 @@ def _make_documents(
         source_manifest["coverage"]["gridAssets"] = grid_document["coverage"]
         source_manifest["coverage"]["plannerCatalogue"] = planner_document["coverage"]
 
+        if not getattr(args, "no_enemy_assets", False):
+            if repak is None or not pak_paths:
+                raise CatalogueError(
+                    "enemy extraction needs the standalone pak index; pass --no-enemy-assets to skip"
+                )
+            print("Extracting enemy balance rows from Design/ClassDefs")
+            enemy_document = build_enemy_assets(
+                paks_dir=inventory.installation.paks_dir,
+                design_paks=pak_paths,
+                retoc=retoc,
+                repak=repak,
+                archive_key=archive_key,
+                reader=semantic_reader,
+                package_index=package_index,
+                source_fingerprint=source_fingerprint,
+                secret_environment_names=(args.aes_key_env,),
+                jobs=args.jobs,
+            )
+            source_manifest["coverage"]["enemyAssets"] = enemy_document["coverage"]
+
     baseline_path = args.baseline
     if baseline_path is not None and not baseline_path.exists():
         raise CatalogueError(f"baseline does not exist: {baseline_path}")
@@ -530,6 +552,8 @@ def _make_documents(
         documents["grid-assets.json"] = grid_document
     if planner_document is not None:
         documents["planner-catalogue.json"] = planner_document
+    if enemy_document is not None:
+        documents["enemy-assets.json"] = enemy_document
     return documents, validation, binary_files
 
 
@@ -797,6 +821,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-semantic-assets",
         action="store_true",
         help="skip Unreal property parsing and PNG icon extraction",
+    )
+    extract.add_argument(
+        "--no-enemy-assets",
+        action="store_true",
+        help="skip enemy balance extraction from Design/ClassDefs",
     )
     extract.add_argument(
         "--jobs",

@@ -164,3 +164,37 @@ def scan_paks(pak_paths: Iterable[Path], repak: Path, key: str, game_dir: Path) 
         "members": members,
         "failures": failures,
     }
+
+
+def read_pak_member(
+    pak: Path,
+    repak: Path,
+    key: str,
+    member_path: str,
+    *,
+    timeout: int = 120,
+) -> str:
+    """Return one standalone-pak member decoded as UTF-8 text.
+
+    ``repak get`` streams a single member to stdout without unpacking the
+    archive.  Design data such as ``Design/ClassDefs`` and ``Design/Difficulty``
+    lives in the standalone ``.pak`` rather than IoStore, so it never reaches
+    the package index that drives semantic extraction.
+    """
+
+    normalized = _normal_path(member_path)
+    if normalized != member_path:
+        raise CatalogueError("refusing to read a non-normalized archive member path")
+    parsed = PurePosixPath(normalized)
+    if parsed.is_absolute() or ".." in parsed.parts:
+        raise CatalogueError("refusing to read an unsafe archive member path")
+    result = run_secret_command(
+        [str(repak), "--aes-key", key, "get", str(pak), normalized],
+        secret=key,
+        timeout=timeout,
+    )
+    if result.returncode:
+        raise CatalogueError(f"repak could not read archive member: {normalized}")
+    # The design CSVs are authored with a UTF-8 BOM; strip it so the first
+    # column name is not silently prefixed.
+    return result.stdout.lstrip("﻿")
